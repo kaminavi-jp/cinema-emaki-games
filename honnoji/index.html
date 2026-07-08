@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>本能寺への道|シネマ絵巻</title>
+<meta name="description" content="光秀となり夜を駆けよ。タップで篝火を飛び越えるワンボタン疾走ゲーム。戦国武将の生涯を絵巻にするYouTubeチャンネル「シネマ絵巻」より。">
+
+<!-- OGP / X card — og:url と og:image は公開URL確定後に絶対URLへ差し替える -->
+<meta property="og:type" content="website">
+<meta property="og:title" content="本能寺への道|シネマ絵巻">
+<meta property="og:description" content="光秀となり夜を駆けよ。タップで篝火を飛び越えるワンボタン疾走ゲーム。何歩まで駆けられるか。">
+<meta property="og:url" content="https://kaminavi-jp.github.io/cinema-emaki-games/honnoji/">
+<meta property="og:image" content="https://kaminavi-jp.github.io/cinema-emaki-games/honnoji/og.png">
+<meta property="og:site_name" content="シネマ絵巻">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="本能寺への道|シネマ絵巻">
+<meta name="twitter:description" content="光秀となり夜を駆けよ。タップで篝火を飛び越えるワンボタン疾走ゲーム。">
+<meta name="twitter:image" content="https://kaminavi-jp.github.io/cinema-emaki-games/honnoji/og.png">
+
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%;overflow:hidden;background:#0d0b09;
+    overscroll-behavior:none;touch-action:manipulation;
+    -webkit-touch-callout:none;-webkit-tap-highlight-color:transparent}
+  #wrap{position:fixed;inset:0;width:100%;height:100dvh;overflow:hidden;
+    font-family:'Yu Mincho','Hiragino Mincho ProN','Shippori Mincho',serif;user-select:none;
+    -webkit-user-select:none}
+  #c{display:block;width:100%;height:100%;background:#0d0b09}
+  #hud{position:absolute;top:max(14px,env(safe-area-inset-top));left:16px;right:16px;
+    display:flex;justify-content:space-between;
+    align-items:flex-start;pointer-events:none;color:#E8DFC8;text-shadow:0 2px 8px rgba(0,0,0,.7)}
+  #dist{font-size:clamp(22px,4.5vmin,34px);letter-spacing:.06em;font-weight:600}
+  #dist span{font-size:.6em;opacity:.75;margin-left:.1em}
+  #best{font-size:clamp(12px,2.4vmin,16px);color:#C9A227;letter-spacing:.08em;opacity:.85;margin-top:.4em;text-align:right}
+  #place{position:absolute;top:38%;left:0;right:0;text-align:center;
+    color:rgba(232,223,200,0);font-size:clamp(24px,6vmin,42px);letter-spacing:.35em;
+    transition:color .5s;pointer-events:none;text-shadow:0 2px 12px rgba(0,0,0,.8)}
+  #place.show{color:rgba(232,223,200,.9)}
+  #overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;gap:16px;padding:24px;
+    background:radial-gradient(ellipse 70% 60% at 50% 46%,rgba(13,11,9,.55),rgba(13,11,9,.92));
+    color:#E8DFC8;text-align:center;transition:opacity .4s}
+  #overlay.hide{opacity:0;pointer-events:none}
+  #ttl{font-size:clamp(32px,9vmin,60px);letter-spacing:.18em;color:#E8DFC8;
+    border-bottom:2px solid #C9A227;padding-bottom:.12em;text-shadow:0 3px 14px rgba(0,0,0,.7);
+    white-space:nowrap}
+  #sub{font-size:clamp(14px,3vmin,20px);line-height:1.9;color:rgba(232,223,200,.82);letter-spacing:.05em}
+  .btn{background:none;color:#E8DFC8;border:1.5px solid #B3402A;
+    padding:.6em 2em;font-family:inherit;font-size:clamp(16px,3.2vmin,21px);letter-spacing:.2em;
+    border-radius:4px;cursor:pointer;transition:all .2s;text-decoration:none;display:inline-block}
+  .btn:hover{background:#B3402A;color:#0d0b09;box-shadow:0 0 24px rgba(179,64,42,.5)}
+  .btn.gold{border-color:#C9A227;letter-spacing:.08em;font-size:clamp(13px,2.6vmin,17px);padding:.55em 1.6em}
+  .btn.gold:hover{background:#C9A227;color:#0d0b09;box-shadow:0 0 24px rgba(201,162,39,.45)}
+  #actions{display:flex;flex-direction:column;gap:12px;align-items:center;margin-top:4px}
+  #actions.hidden{display:none}
+  #credit{position:absolute;bottom:max(10px,env(safe-area-inset-bottom));left:0;right:0;text-align:center;
+    pointer-events:none;color:rgba(232,223,200,.45);font-size:clamp(10px,2vmin,13px);letter-spacing:.25em}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="c"></canvas>
+  <div id="hud">
+    <div id="dist">0 <span>歩</span></div>
+    <div id="best">最高 0</div>
+  </div>
+  <div id="place">亀山、発つ</div>
+  <div id="overlay">
+    <div id="ttl">本能寺への道</div>
+    <div id="sub">タップ / スペースで跳ぶ<br>篝火を越えて、夜を駆けよ</div>
+    <button id="btn" class="btn">駆け出す</button>
+    <div id="actions" class="hidden">
+      <a id="shareX" class="btn gold" target="_blank" rel="noopener">Xで戦果を伝える</a>
+      <a id="ytLink" class="btn gold" href="https://www.youtube.com/@Cinema_emaki" target="_blank" rel="noopener">絵巻の本編を観る</a>
+    </div>
+  </div>
+  <div id="credit">シネマ絵巻 ─ 戦国武将の生涯を、60秒の絵巻に</div>
+</div>
+
+<script>
+(function(){
+  const PAGE_URL='https://kaminavi-jp.github.io/cinema-emaki-games/honnoji/';
+  const cv=document.getElementById('c'), wrap=document.getElementById('wrap');
+  const ov=document.getElementById('overlay'), btn=document.getElementById('btn');
+  const distEl=document.getElementById('dist'), bestEl=document.getElementById('best'),
+        ttl=document.getElementById('ttl'), sub=document.getElementById('sub'),
+        placeEl=document.getElementById('place'), actions=document.getElementById('actions'),
+        shareX=document.getElementById('shareX');
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let ctx, W=0, H=0, ground=0, dpr=1;
+
+  function setup(){
+    dpr=Math.min(devicePixelRatio||1,2);
+    const r=cv.getBoundingClientRect(); W=r.width; H=r.height;
+    cv.width=Math.round(W*dpr); cv.height=Math.round(H*dpr);
+    ctx=cv.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0);
+    ground=H*0.80;
+  }
+  let rz; addEventListener('resize',()=>{clearTimeout(rz);rz=setTimeout(()=>{setup();if(player.onGround)player.y=ground;},120)});
+
+  // ---- state ----
+  let state='ready', dist=0, best=0, speed=0, baseSpeed=300, t=0, shake=0;
+  const player={x:0,y:0,vy:0,r:20,onGround:true,legT:0};
+  let obstacles=[], embers=[], mist=[], spawnT=0;
+  const G=2100, JUMP=-760;
+  const places=['亀山、発つ','老ノ坂を越える','桂川を渡る','夜が、白む'];
+  let placeIdx=-1, placeTimer=0;
+
+  try{ best=parseInt(localStorage.getItem('honnoji_best'))||0; }catch(e){}
+  bestEl.textContent='最高 '+best;
+
+  function reset(){
+    dist=0; speed=baseSpeed; t=0; shake=0; obstacles=[]; embers=[]; spawnT=.6;
+    player.x=Math.min(W*0.24,180); player.y=ground; player.vy=0; player.onGround=true; player.legT=0;
+    placeIdx=-1; placeTimer=0; placeEl.classList.remove('show');
+    if(mist.length===0) for(let i=0;i<(reduce?6:16);i++)
+      mist.push({x:Math.random()*W,y:H*(.35+Math.random()*.4),s:8+Math.random()*22,v:20+Math.random()*30,a:.03+Math.random()*.05});
+  }
+  function start(){ reset(); state='play'; ov.classList.add('hide'); actions.classList.add('hidden'); }
+  function gameOver(){
+    state='over'; shake=14;
+    const score=Math.floor(dist);
+    best=Math.max(best,score);
+    try{ localStorage.setItem('honnoji_best',best); }catch(e){}
+    bestEl.textContent='最高 '+best;
+    ttl.textContent='是非に及ばず'; ttl.style.color='#B3402A'; ttl.style.borderColor='#B3402A';
+    sub.innerHTML=score+' 歩 進んだ<br>もう一度、駆けるか';
+    btn.textContent='再び駆ける';
+    const text='「本能寺への道」— '+score+'歩、夜を駆けて力尽きた。是非に及ばず。\n何歩まで駆けられる?\n#シネマ絵巻 #本能寺への道';
+    shareX.href='https://twitter.com/intent/tweet?text='+encodeURIComponent(text)+'&url='+encodeURIComponent(PAGE_URL);
+    actions.classList.remove('hidden');
+    ov.classList.remove('hide');
+  }
+
+  function jump(){
+    if(state==='play'){ if(player.onGround){ player.vy=JUMP; player.onGround=false; } }
+    else start();
+  }
+  btn.addEventListener('click',e=>{e.stopPropagation();start();});
+  actions.addEventListener('pointerdown',e=>e.stopPropagation());
+  actions.addEventListener('click',e=>e.stopPropagation());
+  wrap.addEventListener('pointerdown',e=>{e.preventDefault();jump();});
+  addEventListener('keydown',e=>{ if(e.code==='Space'||e.code==='ArrowUp'){e.preventDefault();jump();} });
+
+  function spawn(){
+    const h=26+Math.random()*22;
+    obstacles.push({x:W+40,w:16+Math.random()*10,h:h,fire:.0});
+  }
+
+  function update(dt){
+    t+=dt;
+    if(state==='play'){
+      speed+=dt*7;
+      dist+=speed*dt/26;
+      // place milestones
+      const idx=Math.min(places.length-1,Math.floor(dist/220));
+      if(idx!==placeIdx){ placeIdx=idx; placeEl.textContent=places[idx];
+        placeEl.classList.add('show'); placeTimer=2.2; }
+      if(placeTimer>0){ placeTimer-=dt; if(placeTimer<=0) placeEl.classList.remove('show'); }
+      // player physics
+      player.vy+=G*dt; player.y+=player.vy*dt;
+      if(player.y>=ground){ player.y=ground; player.vy=0; player.onGround=true; }
+      if(player.onGround) player.legT+=dt*speed*0.03;
+      // obstacles
+      spawnT-=dt;
+      const gap=Math.max(.62, 1.35 - speed*0.0011);
+      if(spawnT<=0){ spawn(); spawnT=gap+Math.random()*.35; }
+      for(const o of obstacles){ o.x-=speed*dt; o.fire=Math.min(1,o.fire+dt*4); }
+      obstacles=obstacles.filter(o=>o.x+o.w>-20);
+      // collision (forgiving AABB)
+      const px=player.x-player.r*0.6, pw=player.r*1.2,
+            py=player.y-player.r*1.7, ph=player.r*1.7;
+      for(const o of obstacles){
+        const ox=o.x, oy=ground-o.h;
+        if(px<ox+o.w-3 && px+pw>ox+3 && py+ph>oy+4){ gameOver(); break; }
+      }
+      // embers from nearest brazier
+      if(!reduce) for(const o of obstacles){
+        if(o.x>-20&&o.x<W&&Math.random()<0.5)
+          embers.push({x:o.x+o.w/2,y:ground-o.h,vx:-speed*.3+(Math.random()-.5)*30,
+            vy:-40-Math.random()*60,life:1,r:1+Math.random()*2});
+      }
+    }
+    if(shake>0) shake=Math.max(0,shake-dt*40);
+    // ambient
+    for(const m of mist){ m.x-=m.v*dt*(state==='play'?1.6:.5); if(m.x<-60){m.x=W+40;m.y=H*(.35+Math.random()*.4);} }
+    for(const e of embers){ e.x+=e.vx*dt; e.y+=e.vy*dt; e.vy+=90*dt; e.life-=dt*1.1; }
+    embers=embers.filter(e=>e.life>0);
+  }
+
+  function draw(){
+    ctx.save();
+    if(shake>0) ctx.translate((Math.random()-.5)*shake,(Math.random()-.5)*shake);
+    // sky
+    const g=ctx.createLinearGradient(0,0,0,H);
+    g.addColorStop(0,'#0b0a0d'); g.addColorStop(.55,'#141019'); g.addColorStop(1,'#1a1512');
+    ctx.fillStyle=g; ctx.fillRect(-20,-20,W+40,H+40);
+    // 本能寺 fire glow far right
+    const fg=ctx.createRadialGradient(W*0.9,ground,10,W*0.9,ground,W*0.5);
+    fg.addColorStop(0,'rgba(179,64,42,.32)'); fg.addColorStop(1,'rgba(179,64,42,0)');
+    ctx.fillStyle=fg; ctx.fillRect(0,0,W,H);
+    // crescent moon (三日月)
+    const mx=W*0.82,my=H*0.2,mr=Math.min(W,H)*0.075;
+    ctx.save(); ctx.fillStyle='#C9A227'; ctx.shadowColor='rgba(201,162,39,.6)'; ctx.shadowBlur=30;
+    ctx.beginPath(); ctx.arc(mx,my,mr,0,7); ctx.fill();
+    ctx.shadowBlur=0; ctx.fillStyle='#0f0c14';
+    ctx.beginPath(); ctx.arc(mx+mr*0.42,my-mr*0.28,mr*0.95,0,7); ctx.fill(); ctx.restore();
+    // mountains (parallax layers)
+    function ridge(base,amp,col,seed){ ctx.fillStyle=col; ctx.beginPath(); ctx.moveTo(0,H);
+      for(let x=0;x<=W;x+=40){ const y=base+Math.sin(x*0.008+seed)*amp+Math.sin(x*0.021+seed*2)*amp*0.4; ctx.lineTo(x,y);}
+      ctx.lineTo(W,H); ctx.closePath(); ctx.fill(); }
+    ridge(H*0.5,26,'#181420',1.2); ridge(H*0.6,34,'#211a24',3.1);
+    // mist
+    for(const m of mist){ ctx.fillStyle='rgba(232,223,200,'+m.a+')'; ctx.beginPath();
+      ctx.ellipse(m.x,m.y,m.s*2.4,m.s,0,0,7); ctx.fill(); }
+    // ground
+    ctx.fillStyle='#0a0908'; ctx.fillRect(-20,ground,W+40,H-ground+20);
+    ctx.strokeStyle='rgba(201,162,39,.22)'; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.moveTo(0,ground+.5); ctx.lineTo(W,ground+.5); ctx.stroke();
+    // braziers (obstacles)
+    for(const o of obstacles){ const ox=o.x, oy=ground-o.h;
+      ctx.fillStyle='#0a0908'; ctx.fillRect(ox,oy,o.w,o.h);           // post
+      ctx.fillStyle='#1c150d'; ctx.fillRect(ox-3,oy-4,o.w+6,6);        // basket
+      const fh=12+Math.sin(t*12+ox)*3;
+      const fgr=ctx.createLinearGradient(0,oy-fh,0,oy);
+      fgr.addColorStop(0,'rgba(201,162,39,.95)'); fgr.addColorStop(.6,'rgba(179,64,42,.9)'); fgr.addColorStop(1,'rgba(179,64,42,.2)');
+      ctx.fillStyle=fgr; ctx.beginPath(); ctx.moveTo(ox-2,oy-2);
+      ctx.quadraticCurveTo(ox+o.w/2,oy-fh-6,ox+o.w+2,oy-2); ctx.closePath(); ctx.fill();
+    }
+    // embers
+    for(const e of embers){ ctx.fillStyle='rgba(201,162,39,'+Math.max(0,e.life)+')';
+      ctx.beginPath(); ctx.arc(e.x,e.y,e.r,0,7); ctx.fill(); }
+    // player (samurai silhouette)
+    drawSamurai(player.x,player.y);
+    ctx.restore();
+    distEl.firstChild.textContent=Math.floor(dist)+' ';
+  }
+
+  function drawSamurai(x,y){
+    const r=player.r, run=player.onGround?Math.sin(player.legT):0.2, air=!player.onGround;
+    ctx.save(); ctx.translate(x,y);
+    // rim light
+    ctx.fillStyle='#050404'; ctx.strokeStyle='rgba(201,162,39,.35)'; ctx.lineWidth=1.4;
+    // legs
+    ctx.lineWidth=6; ctx.strokeStyle='#070605'; ctx.lineCap='round';
+    const l1=air?10:run*12, l2=air?-8:-run*12;
+    ctx.beginPath(); ctx.moveTo(-2,-r*0.5); ctx.lineTo(-2+l1,0); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(2,-r*0.5); ctx.lineTo(2+l2,0); ctx.stroke();
+    // body (hakama + torso)
+    ctx.fillStyle='#070605'; ctx.beginPath();
+    ctx.moveTo(-r*0.5,-r*1.7); ctx.lineTo(r*0.5,-r*1.7);
+    ctx.lineTo(r*0.62,-r*0.5); ctx.lineTo(-r*0.62,-r*0.5); ctx.closePath(); ctx.fill();
+    // sword on back
+    ctx.strokeStyle='#2a2018'; ctx.lineWidth=3;
+    ctx.beginPath(); ctx.moveTo(-r*0.3,-r*1.5); ctx.lineTo(-r*1.0,-r*2.3); ctx.stroke();
+    ctx.strokeStyle='#C9A227'; ctx.lineWidth=1.4;
+    ctx.beginPath(); ctx.moveTo(-r*0.5,-r*1.7); ctx.lineTo(-r*0.68,-r*1.95); ctx.stroke();
+    // head + topknot
+    ctx.fillStyle='#070605'; ctx.beginPath(); ctx.arc(0,-r*2.0,r*0.42,0,7); ctx.fill();
+    ctx.fillRect(-r*0.14,-r*2.65,r*0.28,r*0.4);
+    // rim highlight down the back
+    ctx.strokeStyle='rgba(201,162,39,.28)'; ctx.lineWidth=1.4;
+    ctx.beginPath(); ctx.moveTo(r*0.5,-r*1.7); ctx.lineTo(r*0.62,-r*0.5); ctx.stroke();
+    ctx.restore();
+  }
+
+  let last=0, raf;
+  function frame(ts){
+    raf=requestAnimationFrame(frame);
+    if(!last) last=ts;
+    let dt=(ts-last)/1000; last=ts; dt=Math.min(dt,0.05);
+    update(dt); draw();
+  }
+  document.addEventListener('visibilitychange',()=>{
+    if(document.hidden){ cancelAnimationFrame(raf); raf=0; last=0; }
+    else if(!raf) raf=requestAnimationFrame(frame);
+  });
+
+  setup(); reset();
+  raf=requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
