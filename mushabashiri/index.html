@@ -147,7 +147,8 @@ const SPRITES={};let spritesReady=false;
 (function(){
   const player=['runA','runB','jump','dead'];
   const defs={runA:'img/shika_runA.png',runB:'img/shika_runB.png',jump:'img/shika_jump.png',dead:'img/shika_dead.png',
-    eYari:'img/enemy_yari.png',eKatana:'img/enemy_katana.png',eTeppo:'img/enemy_teppo.png'};
+    eYari:'img/enemy_yari.png',eKatana:'img/enemy_katana.png',eTeppo:'img/enemy_teppo.png',
+    tawara:'img/item_tawara.png',koban:'img/item_koban.png'};
   let n=0;
   for(const[k,src]of Object.entries(defs)){
     const im=new Image();
@@ -566,6 +567,12 @@ function drawAshigaru(x,y,ph,alpha,color,o){
 }
 //---- 米俵 ----
 function drawTawara(x,y){
+  const im=SPRITES.tawara;
+  if(imgOk(im)){
+    const w=42,h=im.naturalHeight*w/im.naturalWidth;
+    ctx.drawImage(im,x-w/2,y-h/2,w,h);
+    return;
+  }
   ctx.save();ctx.translate(x,y);
   ctx.fillStyle='#c9a25f';ctx.strokeStyle=INK;ctx.lineWidth=1.5;
   ctx.beginPath();ctx.ellipse(0,0,16,11,0,0,7);ctx.fill();ctx.stroke();
@@ -577,9 +584,17 @@ function drawTawara(x,y){
 }
 //---- 小判(レアドロップ) ----
 function drawKoban(x,y){
-  ctx.save();ctx.translate(x,y);
   const g=Math.sin(performance.now()/180)*.5+.5;   // きらめき
+  const im=SPRITES.koban;
+  ctx.save();ctx.translate(x,y);
   ctx.rotate(Math.sin(performance.now()/300)*.15);
+  if(imgOk(im)){
+    const h=34,w=im.naturalWidth*h/im.naturalHeight;
+    ctx.drawImage(im,-w/2,-h/2,w,h);
+    ctx.globalAlpha=.25+g*.35;ctx.fillStyle='#fff2c8';   // きらめきを足す
+    ctx.beginPath();ctx.ellipse(-4,-5,4.5,2.4,-.5,0,7);ctx.fill();
+    ctx.restore();return;
+  }
   ctx.fillStyle='#d9b44a';ctx.strokeStyle='#8a6a25';ctx.lineWidth=2;
   ctx.beginPath();ctx.ellipse(0,0,15,10,0,0,7);ctx.fill();ctx.stroke();
   ctx.strokeStyle='rgba(138,106,37,.7)';ctx.lineWidth=1.4;
