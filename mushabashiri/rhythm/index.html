@@ -32,7 +32,7 @@ addEventListener('resize',resize);resize();
 //==================== スプライト(共有資産) ====================
 const SPRITES={};let ready=false;
 (function(){
-  const defs={runA:'../img/shika_runA.png',runB:'../img/shika_runB.png',
+  const defs={runA:'../img/shika_runA.png',runB:'../img/shika_runB.png',jump:'../img/shika_jump.png',
     eYari:'../img/enemy_yari.png',eKatana:'../img/enemy_katana.png'};
   let n=0,tot=Object.keys(defs).length;
   for(const[k,s]of Object.entries(defs)){const im=new Image();im.onload=()=>{if(++n===tot)ready=true};im.src=s;SPRITES[k]=im;}
@@ -54,10 +54,11 @@ const sfx={
 
 //==================== 状態 ====================
 let state='title';
-const P={x:PX,leg:0,alive:true,slashT:0,perfect:false,inv:0,revive:true,rot:0};
-const R={t:0,px:0,speed:150,kills:0,combo:0,maxCombo:0,gauge:0,spawnT:1.1,
+const GY=GROUND; // 足元の基準
+const P={x:PX,y:GY,vy:0,jumps:0,leg:0,alive:true,slashT:0,perfect:false,inv:0,revive:true,rot:0};
+const R={t:0,px:0,speed:150,kills:0,combo:0,maxCombo:0,gauge:0,spawnT:1.1,obsT:2.4,
   judgeTxt:'',judgeT:0,lock:0,overlayT:0,shakeT:0,shakeAmp:0,flash:0,ultT:0};
-let enemies=[],parts=[],floats=[];
+let enemies=[],obstacles=[],parts=[],floats=[];
 let best=0;try{best=+localStorage.getItem('musha_rhythm_best')||0}catch(e){}
 
 //==================== 背景 ====================
@@ -68,10 +69,14 @@ let rains=[];for(let i=0;i<60;i++)rains.push({x:Math.random()*W,y:Math.random()*
 //==================== 開始 ====================
 function start(){
   state='run';
-  Object.assign(P,{x:PX,leg:0,alive:true,slashT:0,inv:0,revive:true,rot:0});
-  Object.assign(R,{t:0,px:0,speed:150,kills:0,combo:0,maxCombo:0,gauge:0,spawnT:.9,
+  Object.assign(P,{x:PX,y:GY,vy:0,jumps:0,leg:0,alive:true,slashT:0,inv:0,revive:true,rot:0});
+  Object.assign(R,{t:0,px:0,speed:150,kills:0,combo:0,maxCombo:0,gauge:0,spawnT:.9,obsT:2.2,
     judgeTxt:'',judgeT:0,lock:0,overlayT:0,shakeT:0,shakeAmp:0,flash:0,ultT:0});
-  enemies=[];parts=[];floats=[];
+  enemies=[];obstacles=[];parts=[];floats=[];
+}
+function jump(){
+  if(!P.alive)return;
+  if(P.jumps<1){P.vy=-820;P.jumps++;tone(340,620,.12,'square',.05)}  // 1段のみ
 }
 function shake(t,a){R.shakeT=Math.max(R.shakeT,t);R.shakeAmp=a}
 function burst(x,y,n,col,spd){for(let i=0;i<n;i++){const a=Math.random()*6.28,v=spd*(.4+Math.random());parts.push({x,y,vx:Math.cos(a)*v,vy:Math.sin(a)*v-60,life:.35+Math.random()*.25,t:0,col,r:2+Math.random()*3})}}
@@ -85,6 +90,14 @@ function spawn(){
   enemies.push({x:W+40,kind:katana?'katana':'yari',spd,dead:false,dieT:0,dx:0});
   const gap=(katana?.75:1)*(0.95-Math.min(.45,R.t*.006))+Math.random()*.25;
   R.spawnT=Math.max(.42,gap);
+}
+function spawnObstacle(){
+  const m=R.px/10;
+  const pit=m>150&&Math.random()<.4;
+  const spd=R.speed+90;               // 障害物は地形なので走行速度で流れる
+  if(pit)obstacles.push({t:'pit',x:W+40,w:78+Math.random()*40,spd});
+  else obstacles.push({t:'fence',x:W+40,w:26,h:70+Math.random()*22,spd});
+  R.obsT=1.8+Math.random()*1.9;
 }
 
 //==================== 斬撃 ====================
@@ -120,7 +133,9 @@ function ult(){
 function die(){
   if(P.inv>0||!P.alive)return;
   if(P.revive){P.revive=false;P.inv=1.6;R.flash=.6;shake(.3,6);
+    P.y=GY;P.vy=0;P.jumps=0;
     enemies=enemies.filter(e=>e.dead||e.x>HITX+120);
+    obstacles=obstacles.filter(o=>o.x>PX+160);
     floats.push({x:W/2,y:380,txt:'七難八苦！',t:0,life:1.4,size:40,col:GOLD,vy:-20});
     sfx.ult();return;}
   P.alive=false;R.overlayT=0;sfx.hit();shake(.35,8);
@@ -143,13 +158,27 @@ function update(dt){
   if(P.alive){
     R.t+=dt;R.px+=R.speed*dt;R.speed=150+Math.min(120,R.t*4);
     P.leg+=dt*10;
+    // ジャンプ物理
+    P.vy+=2200*dt;P.y+=P.vy*dt;
+    if(P.y>=GY){P.y=GY;P.vy=0;P.jumps=0}
+    const airborne=P.y<GY-38;
+    // 敵兵(斬る)
     R.spawnT-=dt;if(R.spawnT<=0)spawn();
     for(const e of enemies){
       if(e.dead){e.dieT+=dt;e.x+=e.dx*dt*60;e.dx*=.96;continue}
       e.x-=e.spd*dt;
-      if(e.x<PX-6){die();e.dead=true;e.dieT=0;e.dx=0}
+      if(e.x<PX-6){die();e.dead=true;e.dieT=0;e.dx=0}   // 兵はジャンプで回避不可
     }
     enemies=enemies.filter(e=>!e.dead||e.dieT<.5);
+    // 障害物(跳ぶ)
+    R.obsT-=dt;if(R.obsT<=0)spawnObstacle();
+    for(const o of obstacles){
+      o.x-=o.spd*dt;
+      if(!o.hit&&o.x<PX+14&&o.x+o.w>PX-14){
+        if(!airborne){o.hit=true;die()}   // 地上で接触=討死
+      }
+    }
+    obstacles=obstacles.filter(o=>o.x+o.w>-40);
   }else{
     P.rot=Math.min(1.4,P.rot+3*dt);R.overlayT+=dt;
   }
@@ -171,10 +200,13 @@ function drawEnemy(e){
   ctx.restore();
 }
 function drawShika(){
-  const im=(P.slashT>0)?SPRITES.runA:((Math.floor(P.leg/Math.PI)%2===0)?SPRITES.runA:SPRITES.runB);
+  const airborne=P.alive&&P.y<GY-6;
+  let im;
+  if(airborne)im=SPRITES.jump;
+  else im=(Math.floor(P.leg/Math.PI)%2===0)?SPRITES.runA:SPRITES.runB;
   const h=150,w=imgOk(im)?im.naturalWidth*h/im.naturalHeight:70;
   const blink=P.inv>0&&Math.floor(R.t*14)%2===0;
-  ctx.save();ctx.translate(P.x,GROUND);
+  ctx.save();ctx.translate(P.x,P.y);
   if(!P.alive)ctx.rotate(P.rot);
   if(!blink&&imgOk(im))ctx.drawImage(im,-w/2,-h,w,h);
   ctx.restore();
@@ -183,8 +215,23 @@ function drawShika(){
     const k=1-P.slashT/.16;
     ctx.save();ctx.globalAlpha=Math.max(0,1-k);
     ctx.strokeStyle=P.perfect?GOLD:'#f4ecd8';ctx.lineWidth=P.perfect?9:6;ctx.lineCap='round';
-    ctx.beginPath();ctx.arc(P.x+30,GROUND-70,120,-1.1+k*1.8,-1.1+k*1.8+.7);ctx.stroke();
+    ctx.beginPath();ctx.arc(P.x+30,P.y-70,120,-1.1+k*1.8,-1.1+k*1.8+.7);ctx.stroke();
     ctx.restore();
+  }
+}
+function drawObstacles(){
+  for(const o of obstacles){
+    if(o.x>W+40||o.x+o.w<-40)continue;
+    if(o.t==='pit'){
+      ctx.fillStyle='#14100b';ctx.fillRect(o.x,GROUND,o.w,H-GROUND);
+      ctx.strokeStyle='rgba(235,226,207,.25)';ctx.lineWidth=2;
+      ctx.beginPath();ctx.moveTo(o.x,GROUND+2);ctx.lineTo(o.x+6,GROUND+16);ctx.stroke();
+      ctx.beginPath();ctx.moveTo(o.x+o.w,GROUND+2);ctx.lineTo(o.x+o.w-6,GROUND+16);ctx.stroke();
+    }else{ // 柵
+      ctx.fillStyle=INK;
+      ctx.fillRect(o.x,GROUND-o.h,7,o.h);ctx.fillRect(o.x+o.w-7,GROUND-o.h,7,o.h);
+      ctx.fillRect(o.x-6,GROUND-o.h+14,o.w+12,7);ctx.fillRect(o.x-6,GROUND-o.h+o.h*.6,o.w+12,7);
+    }
   }
 }
 function draw(){
@@ -203,6 +250,7 @@ function draw(){
     ctx.setLineDash([]);ctx.globalAlpha=.16;ctx.fillStyle=GOLD;
     ctx.fillRect(HITX-PERFECT,GROUND-130,PERFECT*2,130);ctx.restore();
   }
+  drawObstacles();
   for(const e of enemies)drawEnemy(e);
   if(state!=='title')drawShika();
   // 雨
@@ -233,11 +281,11 @@ function drawTitle(){
   ctx.fillStyle='rgba(235,226,207,.55)';ctx.fillRect(0,0,W,H);
   txt('むしゃばしり！',W/2,220,54,INK,'center','800');
   txt('― 斬撃プロトタイプ ―',W/2,275,20,SHU,'center','700');
-  txt('迫る敵を間合い（朱の線）で斬れ',W/2,380,22,INK,'center','700');
-  txt('ちょうどで斬ると「一閃」＝コンボ&ゲージ大',W/2,420,17,INK,'center','600',.85);
-  txt('タップ：斬る（空振りは隙）',W/2,480,20,INK,'center','600');
-  txt('ゲージ満タン→右下タップで必殺',W/2,514,20,INK,'center','600');
-  txt('敵に触れられたら討死（七難八苦で一度復活）',W/2,556,16,INK,'center','600',.8);
+  txt('兵は斬る・柵や堀は跳べ',W/2,375,22,INK,'center','700');
+  txt('ちょうどで斬ると「一閃」＝コンボ&ゲージ大',W/2,414,16,INK,'center','600',.85);
+  txt('タップ：斬る　／　上スワイプ：跳ぶ',W/2,474,21,SHU,'center','800');
+  txt('ゲージ満タン→右下タップで必殺',W/2,510,18,INK,'center','600');
+  txt('敵に触れられ／障害に激突で討死（七難八苦で一度復活）',W/2,550,15,INK,'center','600',.8);
   txt('自己最長 '+best+'m',W/2,630,22,'#7a5e20','center','800');
   if(Math.floor(performance.now()/500)%2===0)txt('― タップして出陣 ―',W/2,720,24,SHU,'center','800');
 }
@@ -256,18 +304,37 @@ function drawResult(){
 }
 
 //==================== 入力 ====================
-function tapAt(lx,ly){
+// タップ=斬る / 上スワイプ=跳ぶ
+function doTap(lx,ly){
   unlock();
   if(state==='title'){start();return}
-  if(state==='run'){
-    if(!P.alive){if(R.overlayT>.7)start();return}
-    // 右下=必殺
-    if(R.gauge>=1&&lx>W*0.66&&ly>H*0.72){ult();return}
-    slash();
-  }
+  if(!P.alive){if(R.overlayT>.7)start();return}
+  if(R.gauge>=1&&lx>W*0.66&&ly>H*0.72){ult();return}  // 右下=必殺
+  slash();
 }
-cvs.addEventListener('pointerdown',e=>{e.preventDefault();const rc=cvs.getBoundingClientRect();tapAt((e.clientX-rc.left)/rc.width*W,(e.clientY-rc.top)/rc.height*H)});
-addEventListener('keydown',e=>{if(e.code==='Space'){e.preventDefault();tapAt(0,0)}if(e.code==='KeyX'){tapAt(W,H)}});
+let ptrId=null,pStart=null,pActed=false;
+cvs.addEventListener('pointerdown',e=>{
+  e.preventDefault();ptrId=e.pointerId;pActed=false;
+  const rc=cvs.getBoundingClientRect();
+  pStart={x:(e.clientX-rc.left)/rc.width*W,y:(e.clientY-rc.top)/rc.height*H,cx:e.clientX,cy:e.clientY,rc};
+});
+cvs.addEventListener('pointermove',e=>{
+  if(e.pointerId!==ptrId||pActed||!pStart)return;
+  const dy=e.clientY-pStart.cy, dx=e.clientX-pStart.cx;
+  if(dy<-26&&Math.abs(dy)>Math.abs(dx)){pActed=true;unlock();if(state==='run'&&P.alive)jump();}
+});
+function endPtr(e){
+  if(e.pointerId!==ptrId||!pStart)return;
+  if(!pActed)doTap(pStart.x,pStart.y);   // スワイプでなければタップ=斬る
+  ptrId=null;pStart=null;
+}
+cvs.addEventListener('pointerup',e=>{e.preventDefault();endPtr(e)});
+cvs.addEventListener('pointercancel',e=>{ptrId=null;pStart=null});
+addEventListener('keydown',e=>{
+  if(e.code==='Space'){e.preventDefault();doTap(0,H)}          // 斬る
+  if(e.code==='ArrowUp'){e.preventDefault();if(state==='run'&&P.alive)jump();else doTap(0,H)}
+  if(e.code==='KeyX'){if(R.gauge>=1)ult()}
+});
 document.addEventListener('touchmove',e=>e.preventDefault(),{passive:false});
 
 //==================== ループ ====================
@@ -275,7 +342,8 @@ let tp=performance.now();
 window.__errs=[];
 function loop(t){let dt=(t-tp)/1000;tp=t;if(dt>.05)dt=.05;try{update(dt);draw()}catch(e){window.__errs.push(String(e.stack||e.message));console.error(e)}requestAnimationFrame(loop)}
 requestAnimationFrame(loop);
-window.G={R,P,start,slash,ult,tapAt,draw,update,get state(){return state},get enemies(){return enemies},get ready(){return ready}};
+window.G={R,P,start,slash,jump,ult,doTap,draw,update,GY,
+  get state(){return state},get enemies(){return enemies},get obstacles(){return obstacles},get ready(){return ready}};
 </script>
 </body>
 </html>
