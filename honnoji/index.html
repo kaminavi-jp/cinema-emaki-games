@@ -68,7 +68,7 @@
   <div id="place">亀山、発つ</div>
   <div id="overlay">
     <div id="ttl">本能寺への道</div>
-    <div id="sub">タップ / スペースで跳ぶ<br>篝火を越えて、夜を駆けよ</div>
+    <div id="sub">タップ / スペースで跳ぶ<br>千歩先の本能寺まで、夜を駆けよ</div>
     <button id="btn" class="btn">駆け出す</button>
     <div id="actions" class="hidden">
       <a id="shareX" class="btn gold" target="_blank" rel="noopener">Xで戦果を伝える</a>
@@ -103,48 +103,73 @@
   let state='ready', dist=0, best=0, speed=0, baseSpeed=300, t=0, shake=0;
   const player={x:0,y:0,vy:0,r:20,onGround:true,legT:0};
   let obstacles=[], embers=[], mist=[], spawnT=0;
-  const G=2100, JUMP=-760;
-  const places=['亀山、発つ','老ノ坂を越える','桂川を渡る','夜が、白む'];
-  let placeIdx=-1, placeTimer=0;
+  const G=2100, JUMP=-760, GOAL=1000, KESSEN=800;
+  const places=['亀山、発つ','老ノ坂を越える','桂川を渡る','夜が、白む','本能寺は、目前'];
+  const placeAt=[0,220,440,660,KESSEN];
+  let placeIdx=-1, placeTimer=0, pressBuf=-1e9;
+  const GC='';  // 計測エンドポイント(GoatCounter)。空なら無効
+  function track(ev){ if(!GC) return; try{ new Image().src=GC+'?p='+encodeURIComponent('/honnoji/'+ev)+'&r='+Date.now(); }catch(e){} }
+  function rankOf(s){ return s>=GOAL?'本能寺一番槍':s>=KESSEN?'本能寺を目前にせし者':s>=660?'夜明けを見し者':s>=440?'桂川を渡りし者':s>=220?'老ノ坂を越えし者':'亀山の霧に散りし者'; }
 
   try{ best=parseInt(localStorage.getItem('honnoji_best'))||0; }catch(e){}
   bestEl.textContent='最高 '+best;
 
   function reset(){
-    dist=0; speed=baseSpeed; t=0; shake=0; obstacles=[]; embers=[]; spawnT=.6;
+    dist=0; speed=baseSpeed; t=0; shake=0; obstacles=[]; embers=[]; spawnT=.6; pressBuf=-1e9;
     player.x=Math.min(W*0.24,180); player.y=ground; player.vy=0; player.onGround=true; player.legT=0;
     placeIdx=-1; placeTimer=0; placeEl.classList.remove('show');
     if(mist.length===0) for(let i=0;i<(reduce?6:16);i++)
       mist.push({x:Math.random()*W,y:H*(.35+Math.random()*.4),s:8+Math.random()*22,v:20+Math.random()*30,a:.03+Math.random()*.05});
   }
-  function start(){ reset(); state='play'; ov.classList.add('hide'); actions.classList.add('hidden'); }
-  function gameOver(){
-    state='over'; shake=14;
+  function start(){ reset(); state='play'; ov.classList.add('hide'); actions.classList.add('hidden'); track('run'); }
+  function endRun(clear){
+    if(state!=='play') return;
+    state=clear?'clear':'over'; shake=clear?0:14;
     const score=Math.floor(dist);
+    const newBest=score>best&&score>0;
     best=Math.max(best,score);
     try{ localStorage.setItem('honnoji_best',best); }catch(e){}
     bestEl.textContent='最高 '+best;
-    ttl.textContent='是非に及ばず'; ttl.style.color='#B3402A'; ttl.style.borderColor='#B3402A';
-    sub.innerHTML=score+' 歩 進んだ<br>もう一度、駆けるか';
-    btn.textContent='再び駆ける';
-    const text='「本能寺への道」— '+score+'歩、夜を駆けて力尽きた。是非に及ばず。\n何歩まで駆けられる?\n#本能寺の変 #シネマ絵巻 #本能寺への道';
+    const rk=rankOf(score);
+    let text;
+    if(clear){
+      ttl.textContent='敵は本能寺にあり'; ttl.style.color='#C9A227'; ttl.style.borderColor='#C9A227';
+      sub.innerHTML='千歩の夜を、駆け抜けた<br>位階「'+rk+'」';
+      btn.textContent='もう一度駆ける';
+      text='「本能寺への道」— 千歩を駆け抜け、本能寺に到達。位階「'+rk+'」。\n是非に及ばず、とは言わせない。\n#本能寺の変 #シネマ絵巻 #本能寺への道';
+      track('clear');
+    }else{
+      ttl.textContent='是非に及ばず'; ttl.style.color='#B3402A'; ttl.style.borderColor='#B3402A';
+      sub.innerHTML=score+' 歩 進んだ ─ 位階「'+rk+'」<br>'+
+        (newBest?'<span style="color:#C9A227">最高記録、更新</span><br>':'')+
+        '本能寺まで、あと'+(GOAL-score)+'歩';
+      btn.textContent='再び駆ける';
+      text='「本能寺への道」— '+score+'歩、夜を駆けて力尽きた。位階「'+rk+'」。\n本能寺まで、あと'+(GOAL-score)+'歩だった。\n#本能寺の変 #シネマ絵巻 #本能寺への道';
+      track('over');
+    }
     shareX.href='https://twitter.com/intent/tweet?text='+encodeURIComponent(text)+'&url='+encodeURIComponent(PAGE_URL);
     actions.classList.remove('hidden');
     ov.classList.remove('hide');
   }
 
   function jump(){
-    if(state==='play'){ if(player.onGround){ player.vy=JUMP; player.onGround=false; } }
+    if(state==='play'){
+      if(player.onGround){ player.vy=JUMP; player.onGround=false; }
+      else pressBuf=t;
+    }
     else start();
   }
   btn.addEventListener('click',e=>{e.stopPropagation();start();});
   actions.addEventListener('pointerdown',e=>e.stopPropagation());
   actions.addEventListener('click',e=>e.stopPropagation());
+  shareX.addEventListener('click',()=>track('share'));
+  document.getElementById('ytLink').addEventListener('click',()=>track('youtube'));
   wrap.addEventListener('pointerdown',e=>{e.preventDefault();jump();});
   addEventListener('keydown',e=>{ if(e.code==='Space'||e.code==='ArrowUp'){e.preventDefault();jump();} });
 
   function spawn(){
-    const h=26+Math.random()*22;
+    const kessen=dist>=KESSEN;
+    const h=kessen?32+Math.random()*26:26+Math.random()*22;
     obstacles.push({x:W+40,w:16+Math.random()*10,h:h,fire:.0});
   }
 
@@ -153,19 +178,22 @@
     if(state==='play'){
       speed+=dt*7;
       dist+=speed*dt/26;
+      if(dist>=GOAL){ dist=GOAL; endRun(true); }
       // place milestones
-      const idx=Math.min(places.length-1,Math.floor(dist/220));
+      let idx=0; for(let i=0;i<placeAt.length;i++) if(dist>=placeAt[i]) idx=i;
       if(idx!==placeIdx){ placeIdx=idx; placeEl.textContent=places[idx];
         placeEl.classList.add('show'); placeTimer=2.2; }
       if(placeTimer>0){ placeTimer-=dt; if(placeTimer<=0) placeEl.classList.remove('show'); }
       // player physics
       player.vy+=G*dt; player.y+=player.vy*dt;
-      if(player.y>=ground){ player.y=ground; player.vy=0; player.onGround=true; }
+      if(player.y>=ground){ player.y=ground; player.vy=0; player.onGround=true;
+        if(t-pressBuf<=0.12){ pressBuf=-1e9; player.vy=JUMP; player.onGround=false; } }
       if(player.onGround) player.legT+=dt*speed*0.03;
       // obstacles
       spawnT-=dt;
-      const gap=Math.max(.62, 1.35 - speed*0.0011);
-      if(spawnT<=0){ spawn(); spawnT=gap+Math.random()*.35; }
+      if(spawnT<=0){ spawn();
+        spawnT = dist>=KESSEN ? .60+Math.random()*.25
+                              : Math.max(.62,1.35-speed*0.0011)+Math.random()*.35; }
       for(const o of obstacles){ o.x-=speed*dt; o.fire=Math.min(1,o.fire+dt*4); }
       obstacles=obstacles.filter(o=>o.x+o.w>-20);
       // collision (forgiving AABB)
@@ -173,7 +201,7 @@
             py=player.y-player.r*1.7, ph=player.r*1.7;
       for(const o of obstacles){
         const ox=o.x, oy=ground-o.h;
-        if(px<ox+o.w-3 && px+pw>ox+3 && py+ph>oy+4){ gameOver(); break; }
+        if(px<ox+o.w-3 && px+pw>ox+3 && py+ph>oy+4){ endRun(false); break; }
       }
       // embers from nearest brazier
       if(!reduce) for(const o of obstacles){
@@ -196,9 +224,10 @@
     const g=ctx.createLinearGradient(0,0,0,H);
     g.addColorStop(0,'#0b0a0d'); g.addColorStop(.55,'#141019'); g.addColorStop(1,'#1a1512');
     ctx.fillStyle=g; ctx.fillRect(-20,-20,W+40,H+40);
-    // 本能寺 fire glow far right
-    const fg=ctx.createRadialGradient(W*0.9,ground,10,W*0.9,ground,W*0.5);
-    fg.addColorStop(0,'rgba(179,64,42,.32)'); fg.addColorStop(1,'rgba(179,64,42,0)');
+    // 本能寺 fire glow far right(近づくほど強く・大きく)
+    const prog=Math.min(1,dist/GOAL);
+    const fg=ctx.createRadialGradient(W*0.9,ground,10,W*0.9,ground,W*(0.45+0.35*prog));
+    fg.addColorStop(0,'rgba(179,64,42,'+(0.3+0.42*prog).toFixed(2)+')'); fg.addColorStop(1,'rgba(179,64,42,0)');
     ctx.fillStyle=fg; ctx.fillRect(0,0,W,H);
     // crescent moon (三日月)
     const mx=W*0.82,my=H*0.2,mr=Math.min(W,H)*0.075;
@@ -218,6 +247,9 @@
     ctx.fillStyle='#0a0908'; ctx.fillRect(-20,ground,W+40,H-ground+20);
     ctx.strokeStyle='rgba(201,162,39,.22)'; ctx.lineWidth=1.5;
     ctx.beginPath(); ctx.moveTo(0,ground+.5); ctx.lineTo(W,ground+.5); ctx.stroke();
+    // 本能寺(940歩から地平に現れる)
+    const ap=(dist-940)/(GOAL-940);
+    if(ap>0) drawTemple(W-Math.min(1,ap)*W*0.24,ground);
     // braziers (obstacles)
     for(const o of obstacles){ const ox=o.x, oy=ground-o.h;
       ctx.fillStyle='#0a0908'; ctx.fillRect(ox,oy,o.w,o.h);           // post
@@ -235,6 +267,38 @@
     drawSamurai(player.x,player.y);
     ctx.restore();
     distEl.firstChild.textContent=Math.floor(dist)+' ';
+  }
+
+  function drawTemple(x,gy){
+    ctx.save();
+    const w=Math.min(W*0.5,230), h=w*0.6;
+    // 炎の照り
+    const gl=ctx.createRadialGradient(x+w/2,gy-h*0.5,10,x+w/2,gy-h*0.5,w*1.2);
+    gl.addColorStop(0,'rgba(201,120,40,.35)'); gl.addColorStop(1,'rgba(179,64,42,0)');
+    ctx.fillStyle=gl; ctx.fillRect(x-w,gy-h*2.4,w*3,h*2.6);
+    // 大屋根(反りのある寺屋根)
+    ctx.fillStyle='#0a0806';
+    ctx.beginPath();
+    ctx.moveTo(x-w*0.12,gy-h*0.52);
+    ctx.quadraticCurveTo(x+w*0.5,gy-h*1.15,x+w*1.12,gy-h*0.52);
+    ctx.lineTo(x+w*0.94,gy-h*0.44);
+    ctx.quadraticCurveTo(x+w*0.5,gy-h*0.82,x+w*0.06,gy-h*0.44);
+    ctx.closePath(); ctx.fill();
+    // 壁
+    ctx.fillRect(x+w*0.1,gy-h*0.46,w*0.8,h*0.46);
+    // 火の入った格子窓
+    ctx.fillStyle='rgba(201,120,40,.55)';
+    for(let i=0;i<4;i++) ctx.fillRect(x+w*(0.16+i*0.2),gy-h*0.38,w*0.06,h*0.3);
+    // 屋根の上に揺れる炎
+    const f=ctx.createLinearGradient(0,gy-h*1.6,0,gy-h*0.8);
+    f.addColorStop(0,'rgba(201,162,39,0)'); f.addColorStop(1,'rgba(201,162,39,.5)');
+    ctx.fillStyle=f;
+    ctx.beginPath();
+    ctx.moveTo(x+w*0.15,gy-h*0.78);
+    ctx.quadraticCurveTo(x+w*0.33,gy-h*1.5+Math.sin(t*9)*6,x+w*0.5,gy-h*0.88);
+    ctx.quadraticCurveTo(x+w*0.68,gy-h*1.6+Math.cos(t*8)*6,x+w*0.85,gy-h*0.78);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
   }
 
   function drawSamurai(x,y){
