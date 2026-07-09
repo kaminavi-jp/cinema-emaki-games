@@ -38,7 +38,7 @@ let state='title'; // title|run|levelup|dead
 const cam={x:0,y:0};
 const P={x:0,y:0,hp:100,maxhp:100,spd:150,face:1,leg:0,inv:0,
   lvl:1,xp:0,xpNext:5,kills:0,coins:0,
-  pickR:74,dmgMul:1,cdMul:1,
+  pickR:108,dmgMul:1,cdMul:1,
   weapons:[]}; // {id,name,cd,timer,lv,...}
 let enemies=[],gems=[],shots=[],hits=[],floats=[],cards=[];
 const R={t:0,spawnT:0,shakeT:0,shakeA:0,overlayT:0};
@@ -46,10 +46,10 @@ let best=0;try{best=+localStorage.getItem('musha_surv_best')||0}catch(e){}
 
 //==================== 武器定義 ====================
 const WEAPONS={
-  yari:{name:'槍薙ぎ',cd:1.0,base:{dmg:9,r:96},desc:'周囲を薙ぎ払う',
+  yari:{name:'槍薙ぎ',cd:0.95,base:{dmg:13,r:104},desc:'周囲を薙ぎ払う',
     fire(w){const r=w.r+(w.lv-1)*10,dmg=w.dmg*P.dmgMul;let hit=0;
       for(const e of enemies){if(e.dead)continue;if(dist2(e,P)<r*r){damage(e,dmg);hit++}}
-      hits.push({type:'sweep',x:P.x,y:P.y,r,t:0,life:.22,face:P.face});sfx.sweep();}},
+      hits.push({type:'sweep',x:P.x,y:P.y,r,t:0,life:.3,face:P.face});sfx.sweep();}},
   shuriken:{name:'手裏剣',cd:1.3,base:{dmg:7,n:1,spd:340},desc:'最寄りの敵へ投げる',
     fire(w){const tg=nearest();for(let i=0;i<w.n;i++){const a=tg?Math.atan2(tg.y-P.y,tg.x-P.x):0;const sp=a+(i-(w.n-1)/2)*.24;
       shots.push({x:P.x,y:P.y,vx:Math.cos(sp)*w.spd,vy:Math.sin(sp)*w.spd,dmg:w.dmg*P.dmgMul,r:12,life:1.4,pierce:1+Math.floor(w.lv/3),kind:'shuriken',hitset:new Set()});}sfx.shuriken();}},
@@ -80,7 +80,7 @@ function drawCards(){cards=[];const pool=perkPool();for(let i=0;i<3&&pool.length
 //==================== 開始 ====================
 function start(){
   state='run';
-  Object.assign(P,{x:0,y:0,hp:100,maxhp:100,spd:150,face:1,leg:0,inv:0,lvl:1,xp:0,xpNext:5,kills:0,coins:0,pickR:74,dmgMul:1,cdMul:1,weapons:[]});
+  Object.assign(P,{x:0,y:0,hp:100,maxhp:100,spd:150,face:1,leg:0,inv:0,lvl:1,xp:0,xpNext:5,kills:0,coins:0,pickR:108,dmgMul:1,cdMul:1,weapons:[]});
   enemies=[];gems=[];shots=[];hits=[];floats=[];cards=[];
   Object.assign(R,{t:0,spawnT:.5,shakeT:0,shakeA:0,overlayT:0});
   giveWeapon('yari');
@@ -94,17 +94,20 @@ function damage(e,d){e.hp-=d;floats.push({x:e.x,y:e.y-40,txt:Math.round(d),t:0,l
     if(Math.random()<.10)gems.push({x:e.x+8,y:e.y,coin:true,vx:(Math.random()-.5)*40,vy:-70,t:0});}}
 
 //==================== 敵 ====================
+const ENEMY_CAP=58;   // 同時出現の上限(無限湧き防止)
 function spawn(){
   const m=R.t;
-  const n=1+Math.floor(m/25);
+  const alive=enemies.reduce((s,e)=>s+(e.dead?0:1),0);
+  if(alive>=ENEMY_CAP){R.spawnT=.4;return}
+  const n=Math.min(1+Math.floor(m/38),ENEMY_CAP-alive);
   for(let i=0;i<n;i++){
-    const a=Math.random()*6.283,rad=560+Math.random()*80;
-    const katana=m>60&&Math.random()<.3;
-    const hp=(katana?26:14)+m*1.1;
+    const a=Math.random()*6.283,rad=520+Math.random()*70;
+    const katana=m>70&&Math.random()<.28;
+    const hp=(katana?22:11)+m*0.8;
     enemies.push({x:P.x+Math.cos(a)*rad,y:P.y+Math.sin(a)*rad,kind:katana?'katana':'yari',
-      hp,maxhp:hp,spd:(katana?74:58)+Math.min(40,m*.3),r:26,dead:false,dieT:0,xp:katana?3:1,touch:katana?14:9,face:1});
+      hp,maxhp:hp,spd:(katana?72:56)+Math.min(38,m*.28),r:26,dead:false,dieT:0,xp:katana?3:1,touch:katana?12:8,face:1});
   }
-  R.spawnT=Math.max(.35,1.4-m*.012);
+  R.spawnT=Math.max(.5,1.5-m*.011);
 }
 
 //==================== 更新 ====================
@@ -134,7 +137,8 @@ function update(dt){
       floats.push({x:P.x,y:P.y-56,txt:'-'+e.touch,t:0,life:.7,size:18,col:HPC,vy:-30});
       if(P.hp<=0){P.hp=0;die()}}
   }
-  enemies=enemies.filter(e=>!e.dead||e.dieT<.4);
+  // 遠すぎる敵は消す(後方に無限に溜まるのを防止)
+  enemies=enemies.filter(e=>(!e.dead||e.dieT<.4)&&(e.dead||dist2(e,P)<1080*1080));
   // 弾
   for(const s of shots){s.x+=s.vx*dt;s.y+=s.vy*dt;s.life-=dt;
     for(const e of enemies){if(e.dead||s.hitset.has(e))continue;if(dist2(e,s)<(e.r+s.r)*(e.r+s.r)){damage(e,s.dmg);s.hitset.add(e);s.pierce--;if(s.pierce<=0){s.life=0;break}}}}
@@ -142,15 +146,15 @@ function update(dt){
   // 珠・小判
   for(const g of gems){
     g.t+=dt;
-    if(g.t<.4){g.x+=g.vx*dt;g.y+=g.vy*dt;g.vy+=300*dt}
-    const d=Math.hypot(P.x-g.x,P.y-g.y);
-    if(d<P.pickR){g.x+=(P.x-g.x)/d*Math.min(420,d*8)*dt;g.y+=(P.y-g.y)/d*Math.min(420,d*8)*dt}
-    if(d<20){g.got=true;if(g.coin){P.coins++;}else{addXp(g.val);sfx.xp()}}
+    if(g.t<.4&&!g.vac){g.x+=g.vx*dt;g.y+=g.vy*dt;g.vy+=300*dt}
+    const d=Math.hypot(P.x-g.x,P.y-g.y)||1;
+    if(g.vac||d<P.pickR){const pull=g.vac?Math.max(520,d*7):Math.min(460,d*9);g.x+=(P.x-g.x)/d*pull*dt;g.y+=(P.y-g.y)/d*pull*dt}
+    if(d<26){g.got=true;if(g.coin){P.coins++;}else{addXp(g.val);sfx.xp()}}
   }
   gems=gems.filter(g=>!g.got);
 }
 function addXp(v){P.xp+=v;while(P.xp>=P.xpNext){P.xp-=P.xpNext;P.lvl++;P.xpNext=Math.floor(P.xpNext*1.35+3);levelUp()}}
-function levelUp(){state='levelup';drawCards();sfx.lvl();}
+function levelUp(){state='levelup';drawCards();sfx.lvl();for(const g of gems)g.vac=true;}  // 全珠を吸い寄せ
 function pickCard(i){if(!cards[i])return;cards[i].apply();state='run';cards=[];}
 function die(){if(state==='dead')return;state='dead';R.overlayT=0;sfx.die();shake(.4,8);
   const m=Math.floor(R.t);if(m>best){best=m;try{localStorage.setItem('musha_surv_best',best)}catch(e){}}}
@@ -177,6 +181,13 @@ function drawChar(im,wx,wy,face,scale,alpha,rot){
 function draw(){
   const shaken=R.shakeT>0;if(shaken){ctx.save();ctx.translate((Math.random()-.5)*R.shakeA*2,(Math.random()-.5)*R.shakeA*2)}
   drawGround();
+  // 間合いの輪(槍薙ぎの範囲を常時うっすら表示)
+  if(state==='run'||state==='levelup'){
+    const yw=P.weapons.find(w=>w.id==='yari');
+    if(yw){const rr=yw.r+(yw.lv-1)*10,sx=P.x-cam.x,sy=P.y-cam.y;
+      ctx.save();ctx.globalAlpha=.16;ctx.fillStyle='#f4ecd8';ctx.beginPath();ctx.arc(sx,sy,rr,0,6.283);ctx.fill();
+      ctx.globalAlpha=.32;ctx.strokeStyle='#f4ecd8';ctx.lineWidth=2;ctx.setLineDash([7,7]);ctx.beginPath();ctx.arc(sx,sy,rr,0,6.283);ctx.stroke();ctx.setLineDash([]);ctx.restore();}
+  }
   // 珠・小判
   for(const g of gems){const sx=g.x-cam.x,sy=g.y-cam.y;if(g.coin){if(ok(SP.koban)){const w=22,h=SP.koban.naturalHeight*w/SP.koban.naturalWidth;ctx.drawImage(SP.koban,sx-w/2,sy-h/2,w,h)}}else{ctx.save();ctx.fillStyle=XPC;ctx.translate(sx,sy);ctx.rotate(.78);ctx.fillRect(-5,-5,10,10);ctx.restore();}}
   // 敵
@@ -189,7 +200,10 @@ function draw(){
   // 薙ぎ払い等
   for(const hh of hits){
     const sx=hh.x-cam.x,sy=hh.y-cam.y,k=hh.t/hh.life;
-    if(hh.type==='sweep'){ctx.save();ctx.globalAlpha=Math.max(0,1-k)*.7;ctx.strokeStyle='#f4ecd8';ctx.lineWidth=12;ctx.beginPath();ctx.arc(sx,sy,hh.r*(.6+k*.5),0,6.283);ctx.stroke();ctx.restore();}
+    if(hh.type==='sweep'){ctx.save();
+      // 広がる薙ぎの弧(白く塗って範囲を明示)
+      ctx.globalAlpha=Math.max(0,1-k)*.5;ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(sx,sy,hh.r*(.5+k*.55),0,6.283);ctx.arc(sx,sy,hh.r*(.5+k*.55)-16,0,6.283,true);ctx.fill();
+      ctx.globalAlpha=Math.max(0,1-k)*.85;ctx.strokeStyle=GOLD;ctx.lineWidth=4;ctx.beginPath();ctx.arc(sx,sy,hh.r*(.5+k*.55),0,6.283);ctx.stroke();ctx.restore();}
     else if(hh.type==='muzzle'){ctx.save();ctx.globalAlpha=1-k;ctx.fillStyle=GOLD;ctx.beginPath();ctx.arc(sx,sy,12*(1-k)+4,0,6.283);ctx.fill();ctx.restore();}
   }
   // 弾
