@@ -76,7 +76,7 @@ function start(){
 }
 function jump(){
   if(!P.alive)return;
-  if(P.jumps<1){P.vy=-820;P.jumps++;tone(340,620,.12,'square',.05)}  // 1段のみ
+  if(P.jumps<1){P.vy=-900;P.jumps++;tone(340,620,.12,'square',.05)}  // 1段のみ
 }
 function shake(t,a){R.shakeT=Math.max(R.shakeT,t);R.shakeAmp=a}
 function burst(x,y,n,col,spd){for(let i=0;i<n;i++){const a=Math.random()*6.28,v=spd*(.4+Math.random());parts.push({x,y,vx:Math.cos(a)*v,vy:Math.sin(a)*v-60,life:.35+Math.random()*.25,t:0,col,r:2+Math.random()*3})}}
@@ -95,7 +95,7 @@ function spawnObstacle(){
   const m=R.px/10;
   const pit=m>150&&Math.random()<.4;
   const spd=R.speed+90;               // 障害物は地形なので走行速度で流れる
-  if(pit)obstacles.push({t:'pit',x:W+40,w:78+Math.random()*40,spd});
+  if(pit)obstacles.push({t:'pit',x:W+40,w:52+Math.random()*26,spd});
   else obstacles.push({t:'fence',x:W+40,w:26,h:70+Math.random()*22,spd});
   R.obsT=1.8+Math.random()*1.9;
 }
@@ -161,7 +161,7 @@ function update(dt){
     // ジャンプ物理
     P.vy+=2200*dt;P.y+=P.vy*dt;
     if(P.y>=GY){P.y=GY;P.vy=0;P.jumps=0}
-    const airborne=P.y<GY-38;
+    const airborne=P.y<GY-30;
     // 敵兵(斬る)
     R.spawnT-=dt;if(R.spawnT<=0)spawn();
     for(const e of enemies){
