@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>むしゃばしり！斬撃プロト</title>
+<style>
+html,body{margin:0;height:100%;background:#17140f;overflow:hidden;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+#wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}
+canvas{display:block}
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="game"></canvas></div>
+<script>
+'use strict';
+//==================== 基本 ====================
+const W=540,H=960,GROUND=812,PX=150,HITX=312;
+const PERFECT=24,GOOD=62;                 // タイミング窓(px)
+const INK='#241f19',WASHI='#ebe2cf',SHU='#a63c2b',GOLD='#b8913f';
+const SERIF='"Yu Mincho","Hiragino Mincho ProN","Noto Serif JP",serif';
+const cvs=document.getElementById('game'),ctx=cvs.getContext('2d');
+const dpr=Math.min(2,window.devicePixelRatio||1);
+function resize(){
+  const s=Math.min(innerWidth/W,innerHeight/H);
+  cvs.style.width=(W*s)+'px';cvs.style.height=(H*s)+'px';
+  cvs.width=Math.round(W*dpr);cvs.height=Math.round(H*dpr);
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+addEventListener('resize',resize);resize();
+
+//==================== スプライト(共有資産) ====================
+const SPRITES={};let ready=false;
+(function(){
+  const defs={runA:'../img/shika_runA.png',runB:'../img/shika_runB.png',
+    eYari:'../img/enemy_yari.png',eKatana:'../img/enemy_katana.png'};
+  let n=0,tot=Object.keys(defs).length;
+  for(const[k,s]of Object.entries(defs)){const im=new Image();im.onload=()=>{if(++n===tot)ready=true};im.src=s;SPRITES[k]=im;}
+})();
+function imgOk(im){return im&&im.naturalWidth>0}
+
+//==================== 音 ====================
+let AC=null;
+function unlock(){if(!AC){try{AC=new(window.AudioContext||window.webkitAudioContext)()}catch(e){}}if(AC&&AC.state==='suspended')AC.resume();}
+function tone(f0,f1,dur,type,vol){if(!AC)return;const t=AC.currentTime,o=AC.createOscillator(),g=AC.createGain();o.type=type;o.frequency.setValueAtTime(f0,t);o.frequency.exponentialRampToValueAtTime(Math.max(30,f1),t+dur);g.gain.setValueAtTime(vol,t);g.gain.exponentialRampToValueAtTime(.001,t+dur);o.connect(g).connect(AC.destination);o.start(t);o.stop(t+dur+.02);}
+const sfx={
+  perfect:()=>{tone(880,1320,.09,'square',.09);setTimeout(()=>tone(1320,1760,.12,'triangle',.08),40)},
+  good:()=>tone(520,300,.1,'square',.08),
+  whiff:()=>tone(160,110,.12,'sawtooth',.06),
+  hit:()=>tone(150,50,.3,'sawtooth',.16),
+  ult:()=>{tone(300,900,.25,'sawtooth',.12);setTimeout(()=>tone(1200,1800,.3,'triangle',.1),120)},
+  drum:()=>tone(90,60,.12,'sine',.09)
+};
+
+//==================== 状態 ====================
+let state='title';
+const P={x:PX,leg:0,alive:true,slashT:0,perfect:false,inv:0,revive:true,rot:0};
+const R={t:0,px:0,speed:150,kills:0,combo:0,maxCombo:0,gauge:0,spawnT:1.1,
+  judgeTxt:'',judgeT:0,lock:0,overlayT:0,shakeT:0,shakeAmp:0,flash:0,ultT:0};
+let enemies=[],parts=[],floats=[];
+let best=0;try{best=+localStorage.getItem('musha_rhythm_best')||0}catch(e){}
+
+//==================== 背景 ====================
+function ridge(n,base,amp){const p=[];for(let i=0;i<n;i++)p.push(base+(Math.random()-.5)*amp*2);return p}
+const L1={pts:ridge(28,560,55),step:230},L2={pts:ridge(34,665,45),step:170};
+let rains=[];for(let i=0;i<60;i++)rains.push({x:Math.random()*W,y:Math.random()*H,v:850+Math.random()*400,l:10+Math.random()*12});
+
+//==================== 開始 ====================
+function start(){
+  state='run';
+  Object.assign(P,{x:PX,leg:0,alive:true,slashT:0,inv:0,revive:true,rot:0});
+  Object.assign(R,{t:0,px:0,speed:150,kills:0,combo:0,maxCombo:0,gauge:0,spawnT:.9,
+    judgeTxt:'',judgeT:0,lock:0,overlayT:0,shakeT:0,shakeAmp:0,flash:0,ultT:0});
+  enemies=[];parts=[];floats=[];
+}
+function shake(t,a){R.shakeT=Math.max(R.shakeT,t);R.shakeAmp=a}
+function burst(x,y,n,col,spd){for(let i=0;i<n;i++){const a=Math.random()*6.28,v=spd*(.4+Math.random());parts.push({x,y,vx:Math.cos(a)*v,vy:Math.sin(a)*v-60,life:.35+Math.random()*.25,t:0,col,r:2+Math.random()*3})}}
+function judge(txt,col){R.judgeTxt=txt;R.judgeT=.7;R.judgeCol=col}
+
+//==================== 敵 ====================
+function spawn(){
+  const m=R.px/10;
+  const katana=m>120&&Math.random()<.35;
+  const spd=(katana?230:180)+Math.min(150,R.t*3)+Math.random()*30;
+  enemies.push({x:W+40,kind:katana?'katana':'yari',spd,dead:false,dieT:0,dx:0});
+  const gap=(katana?.75:1)*(0.95-Math.min(.45,R.t*.006))+Math.random()*.25;
+  R.spawnT=Math.max(.42,gap);
+}
+
+//==================== 斬撃 ====================
+function slash(){
+  if(!P.alive||R.lock>0){return}
+  // 前方の斬れる敵(最も判定点に近いもの)
+  let tgt=null,bd=1e9;
+  for(const e of enemies){if(e.dead)continue;if(e.x>PX-24&&e.x<HITX+GOOD){const d=Math.abs(e.x-HITX);if(d<bd){bd=d;tgt=e}}}
+  P.slashT=.16;
+  if(tgt&&bd<=GOOD){
+    const perfect=bd<=PERFECT;P.perfect=perfect;
+    tgt.dead=true;tgt.dieT=0;tgt.dx=(perfect?9:6);
+    R.kills++;R.combo++;R.maxCombo=Math.max(R.maxCombo,R.combo);
+    R.gauge=Math.min(1,R.gauge+(perfect?.14:.08));
+    burst(tgt.x,GROUND-40,perfect?12:7,INK,perfect?260:180);
+    if(perfect){burst(tgt.x,GROUND-40,5,GOLD,240);R.flash=.18;shake(.08,3);sfx.perfect();
+      judge(R.combo>=3?R.combo+' 連 一閃！':'一閃！',GOLD);}
+    else{shake(.05,2);sfx.good();judge('討取',SHU)}
+    tone(240+Math.min(600,R.combo*24),90,.12,'square',.09); // コンボで音程上昇
+  }else{
+    // 空振り: 短いロック+コンボ切れ
+    R.lock=.26;R.combo=0;sfx.whiff();judge('空振り','#7a726a');
+  }
+}
+function ult(){
+  if(R.gauge<1||!P.alive)return;
+  R.gauge=0;R.ultT=.6;R.flash=.5;shake(.4,7);sfx.ult();
+  judge('三日月薙ぎ！',GOLD);
+  for(const e of enemies){if(!e.dead&&e.x>PX-30){e.dead=true;e.dieT=0;e.dx=12;R.kills++;
+    burst(e.x,GROUND-40,10,GOLD,260)}}
+  R.combo+=0; // コンボ維持
+}
+function die(){
+  if(P.inv>0||!P.alive)return;
+  if(P.revive){P.revive=false;P.inv=1.6;R.flash=.6;shake(.3,6);
+    enemies=enemies.filter(e=>e.dead||e.x>HITX+120);
+    floats.push({x:W/2,y:380,txt:'七難八苦！',t:0,life:1.4,size:40,col:GOLD,vy:-20});
+    sfx.ult();return;}
+  P.alive=false;R.overlayT=0;sfx.hit();shake(.35,8);
+  if(R.px/10>best){best=Math.floor(R.px/10);try{localStorage.setItem('musha_rhythm_best',best)}catch(e){}}
+}
+
+//==================== 更新 ====================
+function update(dt){
+  if(R.shakeT>0)R.shakeT-=dt;
+  R.flash=Math.max(0,R.flash-dt*3);R.ultT=Math.max(0,R.ultT-dt);
+  for(const p of parts){p.t+=dt;p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=900*dt}
+  parts=parts.filter(p=>p.t<p.life);
+  for(const f of floats){f.t+=dt;f.y+=(f.vy||0)*dt}
+  floats=floats.filter(f=>f.t<f.life);
+  if(state!=='run')return;
+  R.judgeT=Math.max(0,R.judgeT-dt);
+  if(R.lock>0)R.lock-=dt;
+  if(P.slashT>0)P.slashT-=dt;
+  if(P.inv>0)P.inv-=dt;
+  if(P.alive){
+    R.t+=dt;R.px+=R.speed*dt;R.speed=150+Math.min(120,R.t*4);
+    P.leg+=dt*10;
+    R.spawnT-=dt;if(R.spawnT<=0)spawn();
+    for(const e of enemies){
+      if(e.dead){e.dieT+=dt;e.x+=e.dx*dt*60;e.dx*=.96;continue}
+      e.x-=e.spd*dt;
+      if(e.x<PX-6){die();e.dead=true;e.dieT=0;e.dx=0}
+    }
+    enemies=enemies.filter(e=>!e.dead||e.dieT<.5);
+  }else{
+    P.rot=Math.min(1.4,P.rot+3*dt);R.overlayT+=dt;
+  }
+  for(const r of rains){r.y+=r.v*dt;r.x-=r.v*dt*.15;if(r.y>H){r.y=-20;r.x=Math.random()*(W+150)}if(r.x<-30)r.x+=W+60}
+}
+
+//==================== 描画 ====================
+function drawRidge(L,par,al){const sp=R.px*par,shift=Math.floor(sp/L.step),off=sp%L.step,n=Math.ceil(W/L.step)+2;
+  ctx.beginPath();ctx.moveTo(-off-10,H);ctx.lineTo(-off-10,L.pts[((shift%L.pts.length)+L.pts.length)%L.pts.length]);
+  for(let i=0;i<=n;i++){const x=i*L.step-off,y=L.pts[(((i+shift)%L.pts.length)+L.pts.length)%L.pts.length];ctx.lineTo(x,y)}
+  ctx.lineTo(W+L.step,H);ctx.closePath();ctx.fillStyle='rgba(45,40,33,'+al+')';ctx.fill()}
+function txt(s,x,y,sz,c,al,w,a){ctx.save();ctx.globalAlpha=a??1;ctx.font=(w||'700')+' '+sz+'px '+SERIF;ctx.fillStyle=c;ctx.textAlign=al||'center';ctx.textBaseline='middle';ctx.fillText(s,x,y);ctx.restore()}
+function drawEnemy(e){
+  const im=e.kind==='katana'?SPRITES.eKatana:SPRITES.eYari;
+  const h=118,w=imgOk(im)?im.naturalWidth*h/im.naturalHeight:60;
+  ctx.save();ctx.translate(e.x,GROUND+(e.dead?e.dieT*260:0));
+  if(e.dead){ctx.rotate(e.dieT*3);ctx.globalAlpha=Math.max(0,1-e.dieT*2)}
+  if(imgOk(im))ctx.drawImage(im,-w/2,-h,w,h);
+  ctx.restore();
+}
+function drawShika(){
+  const im=(P.slashT>0)?SPRITES.runA:((Math.floor(P.leg/Math.PI)%2===0)?SPRITES.runA:SPRITES.runB);
+  const h=150,w=imgOk(im)?im.naturalWidth*h/im.naturalHeight:70;
+  const blink=P.inv>0&&Math.floor(R.t*14)%2===0;
+  ctx.save();ctx.translate(P.x,GROUND);
+  if(!P.alive)ctx.rotate(P.rot);
+  if(!blink&&imgOk(im))ctx.drawImage(im,-w/2,-h,w,h);
+  ctx.restore();
+  // 斬撃エフェクト(槍の薙ぎ払い)
+  if(P.slashT>0&&P.alive){
+    const k=1-P.slashT/.16;
+    ctx.save();ctx.globalAlpha=Math.max(0,1-k);
+    ctx.strokeStyle=P.perfect?GOLD:'#f4ecd8';ctx.lineWidth=P.perfect?9:6;ctx.lineCap='round';
+    ctx.beginPath();ctx.arc(P.x+30,GROUND-70,120,-1.1+k*1.8,-1.1+k*1.8+.7);ctx.stroke();
+    ctx.restore();
+  }
+}
+function draw(){
+  const shaken=R.shakeT>0;
+  if(shaken){ctx.save();ctx.translate((Math.random()-.5)*R.shakeAmp*2,(Math.random()-.5)*R.shakeAmp*2)}
+  ctx.fillStyle=WASHI;ctx.fillRect(-10,-10,W+20,H+20);
+  // 月
+  ctx.save();ctx.globalAlpha=.4;ctx.fillStyle=GOLD;ctx.beginPath();ctx.arc(92,120,26,0,7);ctx.fill();
+  ctx.globalCompositeOperation='destination-out';ctx.beginPath();ctx.arc(104,108,22,0,7);ctx.fill();ctx.restore();
+  drawRidge(L1,.12,.13);drawRidge(L2,.28,.20);
+  ctx.fillStyle='rgba(36,31,25,.88)';ctx.fillRect(0,GROUND,W,H-GROUND);
+  // 判定リング(斬撃の間合い)
+  if(state==='run'&&P.alive){
+    ctx.save();ctx.globalAlpha=.5;ctx.strokeStyle='rgba(166,60,43,.6)';ctx.lineWidth=2;ctx.setLineDash([6,6]);
+    ctx.beginPath();ctx.moveTo(HITX,GROUND-130);ctx.lineTo(HITX,GROUND);ctx.stroke();
+    ctx.setLineDash([]);ctx.globalAlpha=.16;ctx.fillStyle=GOLD;
+    ctx.fillRect(HITX-PERFECT,GROUND-130,PERFECT*2,130);ctx.restore();
+  }
+  for(const e of enemies)drawEnemy(e);
+  if(state!=='title')drawShika();
+  // 雨
+  ctx.save();ctx.strokeStyle='rgba(70,78,96,.20)';ctx.lineWidth=1.6;
+  for(const r of rains){ctx.beginPath();ctx.moveTo(r.x,r.y);ctx.lineTo(r.x-r.l*.22,r.y+r.l);ctx.stroke()}ctx.restore();
+  for(const p of parts){const a=1-p.t/p.life;ctx.save();ctx.globalAlpha=a*.9;ctx.fillStyle=p.col;ctx.beginPath();ctx.arc(p.x,p.y,p.r*a+1,0,7);ctx.fill();ctx.restore()}
+  for(const f of floats){const a=f.t<f.life-.3?1:Math.max(0,(f.life-f.t)/.3);txt(f.txt,f.x,f.y,f.size,f.col,'center','800',a)}
+  if(R.flash>0){ctx.save();ctx.globalAlpha=R.flash;ctx.fillStyle=GOLD==='#b8913f'?'rgba(244,236,216,'+R.flash+')':'#fff';ctx.fillRect(0,0,W,H);ctx.restore()}
+  if(state==='run')drawHUD();
+  if(state==='title')drawTitle();
+  if(state==='run'&&!P.alive&&R.overlayT>.7)drawResult();
+  if(shaken)ctx.restore();
+}
+function drawHUD(){
+  const m=Math.floor(R.px/10);
+  txt(m,W/2,60,46,INK,'center','800');txt('m',W/2+ctx.measureText(''+m).width/2+52,68,18,INK,'center','600');
+  txt('討取 '+R.kills,W/2,104,20,SHU,'center','700');
+  if(R.combo>=2){ctx.save();const s=1+Math.min(.5,R.combo*.03);txt(R.combo+' 連',W/2,150,26*s,GOLD,'center','800');ctx.restore()}
+  // 必殺ゲージ
+  ctx.save();ctx.fillStyle='rgba(36,31,25,.3)';ctx.fillRect(40,H-46,W-80,14);
+  ctx.fillStyle=R.gauge>=1?GOLD:SHU;ctx.fillRect(40,H-46,(W-80)*R.gauge,14);
+  ctx.strokeStyle=INK;ctx.lineWidth=1.5;ctx.strokeRect(40,H-46,W-80,14);ctx.restore();
+  txt(R.gauge>=1?'▶ 画面右下で必殺「三日月薙ぎ」':'必殺ゲージ',W/2,H-24,13,R.gauge>=1?GOLD:INK,'center','700',R.gauge>=1?1:.6);
+  // 判定表示
+  if(R.judgeT>0)txt(R.judgeTxt,W/2,300,R.judgeTxt.includes('一閃')||R.judgeTxt.includes('薙')?38:26,R.judgeCol,'center','800',Math.min(1,R.judgeT*3));
+}
+function drawTitle(){
+  ctx.fillStyle='rgba(235,226,207,.55)';ctx.fillRect(0,0,W,H);
+  txt('むしゃばしり！',W/2,220,54,INK,'center','800');
+  txt('― 斬撃プロトタイプ ―',W/2,275,20,SHU,'center','700');
+  txt('迫る敵を間合い（朱の線）で斬れ',W/2,380,22,INK,'center','700');
+  txt('ちょうどで斬ると「一閃」＝コンボ&ゲージ大',W/2,420,17,INK,'center','600',.85);
+  txt('タップ：斬る（空振りは隙）',W/2,480,20,INK,'center','600');
+  txt('ゲージ満タン→右下タップで必殺',W/2,514,20,INK,'center','600');
+  txt('敵に触れられたら討死（七難八苦で一度復活）',W/2,556,16,INK,'center','600',.8);
+  txt('自己最長 '+best+'m',W/2,630,22,'#7a5e20','center','800');
+  if(Math.floor(performance.now()/500)%2===0)txt('― タップして出陣 ―',W/2,720,24,SHU,'center','800');
+}
+function drawResult(){
+  const a=Math.min(1,(R.overlayT-.7)/.4);ctx.save();ctx.globalAlpha=a;
+  ctx.fillStyle='rgba(24,20,15,.5)';ctx.fillRect(0,0,W,H);
+  const px=50,py=250,pw=W-100,ph=420;
+  ctx.fillStyle='rgba(240,233,215,.97)';ctx.fillRect(px,py,pw,ph);
+  ctx.strokeStyle=INK;ctx.lineWidth=2;ctx.strokeRect(px+8,py+8,pw-16,ph-16);
+  txt('討死',W/2,py+70,40,SHU,'center','800');
+  txt(Math.floor(R.px/10)+' m',W/2,py+150,48,INK,'center','800');
+  txt('討取 '+R.kills+'　最大 '+R.maxCombo+' 連',W/2,py+210,22,SHU,'center','700');
+  txt('自己最長 '+best+'m',W/2,py+260,17,INK,'center','600',.8);
+  if(Math.floor(performance.now()/600)%2===0)txt('― タップで再び ―',W/2,py+ph-40,21,SHU,'center','700');
+  ctx.restore();
+}
+
+//==================== 入力 ====================
+function tapAt(lx,ly){
+  unlock();
+  if(state==='title'){start();return}
+  if(state==='run'){
+    if(!P.alive){if(R.overlayT>.7)start();return}
+    // 右下=必殺
+    if(R.gauge>=1&&lx>W*0.66&&ly>H*0.72){ult();return}
+    slash();
+  }
+}
+cvs.addEventListener('pointerdown',e=>{e.preventDefault();const rc=cvs.getBoundingClientRect();tapAt((e.clientX-rc.left)/rc.width*W,(e.clientY-rc.top)/rc.height*H)});
+addEventListener('keydown',e=>{if(e.code==='Space'){e.preventDefault();tapAt(0,0)}if(e.code==='KeyX'){tapAt(W,H)}});
+document.addEventListener('touchmove',e=>e.preventDefault(),{passive:false});
+
+//==================== ループ ====================
+let tp=performance.now();
+window.__errs=[];
+function loop(t){let dt=(t-tp)/1000;tp=t;if(dt>.05)dt=.05;try{update(dt);draw()}catch(e){window.__errs.push(String(e.stack||e.message));console.error(e)}requestAnimationFrame(loop)}
+requestAnimationFrame(loop);
+window.G={R,P,start,slash,ult,tapAt,draw,update,get state(){return state},get enemies(){return enemies},get ready(){return ready}};
+</script>
+</body>
+</html>
