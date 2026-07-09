@@ -167,7 +167,7 @@ const SPRITES={};let spritesReady=false;
   const player=['runA','runB','jump','dead'];
   const defs={runA:'img/shika_runA.png',runB:'img/shika_runB.png',jump:'img/shika_jump.png',dead:'img/shika_dead.png',
     eYari:'img/enemy_yari.png',eKatana:'img/enemy_katana.png',eTeppo:'img/enemy_teppo.png',
-    tawara:'img/item_tawara.png',koban:'img/item_koban.png'};
+    tawara:'img/item_tawara.png',koban:'img/item_koban.png',titleBg:'img/title_bg.jpg'};
   let n=0;
   for(const[k,src]of Object.entries(defs)){
     const im=new Image();
@@ -993,23 +993,38 @@ function drawHUD(){
   txt('七難八苦',W-46,92,13,player.revive?INK:'#888','center','600',player.revive?.8:.5);
 }
 function drawTitle(){
-  ctx.fillStyle='rgba(235,226,207,.55)';ctx.fillRect(0,0,W,H);
-  txt('シネマ絵巻 presents',W/2,158,17,INK,'center','600',.75);
-  txt('むしゃばしり！',W/2,235,60,INK,'center','800');
-  stamp('試',W/2+205,182,24,.14);
-  ctx.strokeStyle=INK;ctx.lineWidth=1.5;ctx.globalAlpha=.6;
-  ctx.beginPath();ctx.moveTo(90,290);ctx.lineTo(W-90,290);ctx.stroke();ctx.globalAlpha=1;
-  txt('第一戦　月山富田城の戦い',W/2,330,26,INK,'center','700');
-  txt('山中鹿之介',W/2,388,36,SHU,'center','800');
-  txt('特殊能力「七難八苦」— 一度だけ討死から蘇る',W/2,432,18,INK,'center','600',.85);
-  txt('タップ：跳躍（二段跳び可）',W/2,510,21,INK,'center','600');
-  txt('敵の足軽は踏んで討ち取れ',W/2,545,21,INK,'center','600');
-  txt('槍衾・柵・鉄砲玉に触れれば討死',W/2,580,18,INK,'center','600',.75);
-  txt('最長 '+save.bestDist+'m ／ 最多討取 '+save.bestKills,W/2,650,20,INK,'center','700');
-  txt('今週の石高 '+fmtKoku(save.kokuWeek)+' ／ 総石高 '+fmtKoku(save.koku),W/2,684,19,'#8a6a25','center','700');
-  txt('身分：'+mibunName(save.koku)+'　家宝 '+save.kaho.length+'/'+KAHO.length+'　小判 '+save.kobanWallet+'枚',W/2,716,18,INK,'center','700');
-  if(Math.floor(performance.now()/600)%2===0)txt('― 画面をタップして出陣 ―',W/2,760,23,SHU,'center','700');
-  txt('テスト版：記録はこの端末にのみ保存されます',W/2,H-60,14,INK,'center','500',.55);
+  // 背景キーアート(可愛いポップ)。無ければ和紙単色にフォールバック
+  const bg=SPRITES.titleBg;
+  if(imgOk(bg)){
+    const s=Math.max(W/bg.naturalWidth,H/bg.naturalHeight);
+    const dw=bg.naturalWidth*s,dh=bg.naturalHeight*s;
+    ctx.drawImage(bg,(W-dw)/2,(H-dh)/2,dw,dh);
+  }else{
+    ctx.fillStyle=WASHI;ctx.fillRect(0,0,W,H);
+  }
+  // 題字(上部の明るい空へ。白ハローで可読性)
+  txt('シネマ絵巻 presents',W/2,86,16,INK,'center','700',.8);
+  ctx.save();
+  ctx.shadowColor='rgba(255,250,238,.95)';ctx.shadowBlur=14;
+  txt('むしゃばしり！',W/2,150,58,INK,'center','800');
+  ctx.shadowBlur=8;txt('むしゃばしり！',W/2,150,58,INK,'center','800');
+  ctx.restore();
+  stamp('試',W/2+198,104,22,.14);
+  // 下部の情報パネル(半透明和紙で可読性確保)
+  const py=560,ph=H-py-56;
+  ctx.save();
+  ctx.fillStyle='rgba(240,233,215,.82)';
+  ctx.fillRect(28,py,W-56,ph);
+  ctx.strokeStyle='rgba(36,31,25,.5)';ctx.lineWidth=1.5;ctx.strokeRect(32,py+4,W-64,ph-8);
+  ctx.restore();
+  txt('第一戦　月山富田城の戦い　—　山中鹿之介',W/2,py+30,19,INK,'center','700');
+  txt('能力「七難八苦」一度だけ討死から蘇る',W/2,py+58,15,SHU,'center','700',.95);
+  txt('タップで跳躍（二段可）・敵は踏んで討取・穴と矢に用心',W/2,py+86,14,INK,'center','600',.8);
+  txt('最長 '+save.bestDist+'m ／ 総石高 '+fmtKoku(save.koku)+' ／ '+mibunName(save.koku),W/2,py+118,16,'#7a5e20','center','800');
+  txt('家宝 '+save.kaho.length+'/'+KAHO.length+'　小判 '+save.kobanWallet+'枚',W/2,py+144,15,INK,'center','700',.9);
+  if(Math.floor(performance.now()/500)%2===0)
+    txt('― 画面をタップして出陣 ―',W/2,py+180,23,SHU,'center','800');
+  txt('テスト版：記録はこの端末にのみ保存されます',W/2,H-24,12,INK,'center','600',.6);
 }
 function drawResult(){
   const a=Math.min(1,(run.overlayT-.8)/.4);
