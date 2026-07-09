@@ -204,7 +204,7 @@ function startRun(){
   Object.assign(run,{px:0,t:0,speed:330,kills:0,rice:0,koban:0,kokuGain:0,riceT:2,
     spawnT:1.5,shotT:18+Math.random()*6,shotWarn:0,muzzle:0,
     combo:0,comboT:0,comboBonus:0,
-    waveNext:320+Math.random()*120,waveT:0,calmT:0,
+    waveNext:400+Math.random()*150,waveT:0,calmT:0,
     overlayT:0,line:'',newBest:false,nearFlash:0,reviveFlash:0,milestone:0});
   obstacles=[];bullets=[];floats=[];rices=[];parts=[];
   freezeT=0;shakeT=0;
@@ -306,7 +306,7 @@ function update(dt){
       floats.push({x:W/2,y:360,txt:'敵 襲 ー ッ ！',t:0,life:1.6,size:34,color:SHU,vy:-8});
     }
     if(run.waveT>0){run.waveT-=d;
-      if(run.waveT<=0){run.calmT=2.6;run.waveNext=m0+360+Math.random()*220;
+      if(run.waveT<=0){run.calmT=2.6;run.waveNext=m0+600+Math.random()*350;
         // 静けさのご褒美: 俵の大アーチ
         const x=run.px+W+120;
         for(let i=0;i<7;i++){const t=i/6;rices.push({x:x+i*46,y:GROUND-60-Math.sin(t*Math.PI)*110})}
