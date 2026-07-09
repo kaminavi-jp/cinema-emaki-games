@@ -32,6 +32,7 @@
     align-items:flex-start;pointer-events:none;color:#E8DFC8;text-shadow:0 2px 8px rgba(0,0,0,.7)}
   #dist{font-size:clamp(22px,4.5vmin,34px);letter-spacing:.06em;font-weight:600}
   #dist span{font-size:.6em;opacity:.75;margin-left:.1em}
+  #kills{font-size:clamp(12px,2.6vmin,17px);color:#C9A227;letter-spacing:.08em;margin-top:.15em;min-height:1.2em}
   #best{font-size:clamp(12px,2.4vmin,16px);color:#C9A227;letter-spacing:.08em;opacity:.85;margin-top:.4em;text-align:right}
   #place{position:absolute;top:38%;left:0;right:0;text-align:center;
     color:rgba(232,223,200,0);font-size:clamp(24px,6vmin,42px);letter-spacing:.35em;
@@ -72,14 +73,17 @@
 <div id="wrap">
   <canvas id="c"></canvas>
   <div id="hud">
-    <div id="dist">0 <span>歩</span></div>
+    <div>
+      <div id="dist">0 <span>歩</span></div>
+      <div id="kills"></div>
+    </div>
     <div id="best">最高 0</div>
   </div>
   <div id="place">亀山、発つ</div>
   <button id="skill">時は今</button>
   <div id="overlay">
     <div id="ttl">本能寺への道</div>
-    <div id="sub">タップ / スペースで跳ぶ<br>篝火と足軽を越えて、夜を駆けよ<br>秘技「時は今」で空中三段跳び ─ 千歩先の本能寺へ</div>
+    <div id="sub">タップ / スペースで跳ぶ(二段ジャンプ)<br>篝火は跳び越え、足軽は上から踏め<br>秘技「時は今」で空中三段跳び ─ 千歩先の本能寺へ</div>
     <button id="btn" class="btn">駆け出す</button>
     <div id="actions" class="hidden">
       <a id="shareX" class="btn gold" target="_blank" rel="noopener">Xで戦果を伝える</a>
@@ -97,7 +101,8 @@
   const distEl=document.getElementById('dist'), bestEl=document.getElementById('best'),
         ttl=document.getElementById('ttl'), sub=document.getElementById('sub'),
         placeEl=document.getElementById('place'), actions=document.getElementById('actions'),
-        shareX=document.getElementById('shareX'), skillEl=document.getElementById('skill');
+        shareX=document.getElementById('shareX'), killsEl=document.getElementById('kills'),
+        skillEl=document.getElementById('skill');
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
   let ctx, W=0, H=0, ground=0, dpr=1;
   const MINCHO='"Yu Mincho","Hiragino Mincho ProN",serif';
@@ -125,9 +130,11 @@
   let state='ready', dist=0, best=0, speed=0, baseSpeed=300, t=0, shake=0;
   const player={x:0,y:0,vy:0,r:20,onGround:true,legT:0};
   let obstacles=[], embers=[], mist=[], parts=[], floats=[], spawnT=0;
+  let kills=0, freezeT=0, airJumps=0;
+  const BASE_AIR=1;              // 空中ジャンプ回数(=二段ジャンプ)
   const G=2100, JUMP=-760, GOAL=1000, KESSEN=800;
   const SKILL_CD=22;
-  let skillCD=0, charges=0;
+  let skillCD=0;
   const places=['亀山、発つ','老ノ坂を越える','桂川を渡る','夜が、白む','本能寺は、目前'];
   const placeAt=[0,220,440,660,KESSEN];
   let placeIdx=-1, placeTimer=0, pressBuf=-1e9;
@@ -197,9 +204,9 @@
 
   function reset(){
     dist=0; speed=baseSpeed; t=0; shake=0; obstacles=[]; embers=[]; parts=[]; floats=[];
-    spawnT=.6; pressBuf=-1e9; skillCD=0; charges=0;
+    spawnT=.6; pressBuf=-1e9; skillCD=0; airJumps=0; kills=0; freezeT=0;
     player.x=Math.min(W*0.24,180); player.y=ground; player.vy=0; player.onGround=true; player.legT=0;
-    placeIdx=-1; placeTimer=0; placeEl.classList.remove('show');
+    placeIdx=-1; placeTimer=0; placeEl.classList.remove('show'); killsEl.textContent='';
     if(mist.length===0) for(let i=0;i<(reduce?6:16);i++)
       mist.push({x:Math.random()*W,y:H*(.35+Math.random()*.4),s:8+Math.random()*22,v:20+Math.random()*30,a:.03+Math.random()*.05});
   }
@@ -216,20 +223,21 @@
     try{ localStorage.setItem('honnoji_best',best); }catch(e){}
     bestEl.textContent='最高 '+best;
     const rk=rankOf(score);
+    const uchitori=kills>0?kills+'人を討ち取り、':'';
     let text;
     if(clear){
       ttl.textContent='敵は本能寺にあり'; ttl.style.color='#C9A227'; ttl.style.borderColor='#C9A227';
-      sub.innerHTML='千歩の夜を、駆け抜けた<br>位階「'+rk+'」';
+      sub.innerHTML='千歩の夜を、駆け抜けた'+(kills>0?' ─ 討取 '+kills:'')+'<br>位階「'+rk+'」';
       btn.textContent='もう一度駆ける';
-      text='「本能寺への道」— 千歩を駆け抜け、本能寺に到達。位階「'+rk+'」。\n是非に及ばず、とは言わせない。\n#本能寺の変 #シネマ絵巻 #本能寺への道';
+      text='「本能寺への道」— 千歩を駆け抜け、'+uchitori+'本能寺に到達。位階「'+rk+'」。\n是非に及ばず、とは言わせない。\n#本能寺の変 #シネマ絵巻 #本能寺への道';
       track('clear');
     }else{
       ttl.textContent='是非に及ばず'; ttl.style.color='#B3402A'; ttl.style.borderColor='#B3402A';
-      sub.innerHTML=score+' 歩 進んだ ─ 位階「'+rk+'」<br>'+
+      sub.innerHTML=score+' 歩 進んだ ─ 位階「'+rk+'」'+(kills>0?' ─ 討取 '+kills:'')+'<br>'+
         (newBest?'<span style="color:#C9A227">最高記録、更新</span><br>':'')+
         '本能寺まで、あと'+(GOAL-score)+'歩';
       btn.textContent='再び駆ける';
-      text='「本能寺への道」— '+score+'歩、夜を駆けて力尽きた。位階「'+rk+'」。\n本能寺まで、あと'+(GOAL-score)+'歩だった。\n#本能寺の変 #シネマ絵巻 #本能寺への道';
+      text='「本能寺への道」— '+score+'歩、'+uchitori+'夜を駆けて力尽きた。位階「'+rk+'」。\n本能寺まで、あと'+(GOAL-score)+'歩だった。\n#本能寺の変 #シネマ絵巻 #本能寺への道';
       track('over');
     }
     shareX.href='https://twitter.com/intent/tweet?text='+encodeURIComponent(text)+'&url='+encodeURIComponent(PAGE_URL);
@@ -241,10 +249,9 @@
   // ---- 入力 ----
   function jump(){
     if(state==='play'){
-      if(player.onGround){ player.vy=JUMP; player.onGround=false; sfx.jump(); }
-      else if(charges>0){ charges--; player.vy=JUMP*0.92; sfx.air();
+      if(player.onGround){ player.vy=JUMP; player.onGround=false; sfx.jump(); }  // 着地でairJumpsはBASE_AIRに補充済み
+      else if(airJumps>0){ airJumps--; player.vy=JUMP*0.92; sfx.air();
         burst(player.x,player.y,8,'#C9A227',150,2.6);
-        updateSkillBtn();
       }
       else pressBuf=t;
     }
@@ -252,8 +259,8 @@
     else start();
   }
   function useSkill(){
-    if(state!=='play'||skillCD>0||charges>0) return;
-    charges=3; skillCD=SKILL_CD;
+    if(state!=='play'||skillCD>0) return;
+    airJumps=3; skillCD=SKILL_CD;   // 空中ジャンプを3回に増強
     sfx.skill(); shake=Math.max(shake,3);
     float(W/2,H*0.30,'時は今――',Math.min(W,H)*0.075,'#C9A227',1.6,-14);
     burst(player.x,player.y-PH*0.5,18,'#7FB4D8',220,3);
@@ -261,8 +268,7 @@
     updateSkillBtn();
   }
   function updateSkillBtn(){
-    if(charges>0){ skillEl.className='armed'; skillEl.innerHTML='残 '+'◆'.repeat(charges); }
-    else if(skillCD>0){ skillEl.className='cd'; skillEl.textContent=Math.ceil(skillCD); }
+    if(skillCD>0){ skillEl.className='cd'; skillEl.textContent=Math.ceil(skillCD); }
     else{ skillEl.className='ready'; skillEl.textContent='時は今'; }
   }
   btn.addEventListener('click',e=>{e.stopPropagation();audioUnlock();start();});
@@ -277,6 +283,18 @@
     if(e.code==='Space'||e.code==='ArrowUp'){e.preventDefault();audioUnlock();jump();}
     if(e.code==='KeyX'||e.code==='Enter'){e.preventDefault();audioUnlock();useSkill();}
   });
+
+  // ---- 踏みつけ討取 ----
+  function stomp(o){
+    const ox=o.x, oy=ground-o.h;
+    o.dead=true; o.dy=0; o.da=1;
+    player.vy=-560; player.onGround=false; airJumps=BASE_AIR;  // 踏んで跳ね上がり+空中ジャンプ復活
+    kills++; killsEl.textContent='討取 '+kills;
+    freezeT=.045; shake=Math.max(shake,3); sfx.stomp();
+    burst(ox+o.w/2,oy+14,10,'#1a140e',240,3.2);
+    burst(ox+o.w/2,oy+14,5,'#B3402A',180,2.8);
+    float(ox+o.w/2,oy-24,'討取！',22,'#B3402A',.8);
+  }
 
   // ---- 生成 ----
   function spawn(){
@@ -300,6 +318,7 @@
 
   // ---- 更新 ----
   function update(dt){
+    if(freezeT>0){ freezeT-=dt; return; }   // 討取のヒットストップ
     t+=dt;
     if(skillCD>0&&state==='play'){ skillCD-=dt; if(skillCD<=0){skillCD=0;} updateSkillBtn(); }
     if(state==='play'){
@@ -317,7 +336,7 @@
         if(wasAir&&player.vy>380&&!reduce)  // 着地の土煙
           for(let i=0;i<5;i++)parts.push({x:player.x-8+Math.random()*16,y:ground-2,
             vx:-50-Math.random()*70,vy:-30-Math.random()*50,life:.3,t:0,color:'#5d554a',r:2.6});
-        player.y=ground; player.vy=0; player.onGround=true;
+        player.y=ground; player.vy=0; player.onGround=true; airJumps=BASE_AIR;
         if(t-pressBuf<=0.12){ pressBuf=-1e9; player.vy=JUMP; player.onGround=false; sfx.jump(); }
       }
       if(player.onGround) player.legT+=dt*speed*0.03;
@@ -326,17 +345,22 @@
       if(spawnT<=0){ spawn();
         spawnT = dist>=KESSEN ? .54+Math.random()*.22
                               : Math.max(.60,1.32-speed*0.0011)+Math.random()*.35; }
-      // obstacles move(篝火も敵も一定速度で流れる=跳び越え対象)
+      // obstacles move(篝火も敵も一定速度で流れる)
       for(const o of obstacles){
         o.x-=speed*dt;
         if(o.type==='b') o.fire=Math.min(1,o.fire+dt*4);
+        if(o.dead){ o.dy=(o.dy||0)+320*dt; o.da=(o.da===undefined?1:o.da)-2.4*dt; }
       }
-      obstacles=obstacles.filter(o=>o.x+o.w>-30);
-      // collision(触れたら討死)
+      obstacles=obstacles.filter(o=>o.x+o.w>-30&&(o.da===undefined||o.da>0));
+      // collision: 足軽は上から踏めば討取・横からは討死。篝火は触れたら討死
       const px=player.x-13, pw=26, py=player.y-54, ph=54;
       for(const o of obstacles){
+        if(o.dead) continue;
         const ox=o.x, oy=ground-o.h;
-        if(px<ox+o.w-3 && px+pw>ox+3 && py+ph>oy+4){ endRun(false); break; }
+        if(px<ox+o.w-3 && px+pw>ox+3 && py+ph>oy+4){
+          if(o.type==='e' && player.vy>150 && player.y<oy+26){ stomp(o); }  // 踏みつけ
+          else { endRun(false); break; }
+        }
       }
       // embers
       if(!reduce) for(const o of obstacles){
@@ -418,17 +442,19 @@
 
   function drawEnemy(o){
     const im=o.kind==='katana'?SPR.eKatana:SPR.eYari;
-    const cx=o.x+o.w/2;
+    const cx=o.x+o.w/2, fy=ground+(o.dead?(o.dy||0):0);
+    const alpha=o.dead?Math.max(0,o.da):1;
     if(imgOk(im)){
       const h=EH, w=im.naturalWidth*h/im.naturalHeight;
-      ctx.save(); ctx.translate(cx,ground);
-      ctx.rotate(Math.sin(t*9+o.x*0.02)*.055);
-      ctx.drawImage(im,-w/2,-h+Math.abs(Math.sin(t*9+o.x*0.02))*2,w,h);
-      ctx.restore();
+      ctx.save(); ctx.translate(cx,fy); ctx.globalAlpha=alpha;
+      ctx.rotate(o.dead?1.15:Math.sin(t*9+o.x*0.02)*.055);
+      ctx.drawImage(im,-w/2,-h+(o.dead?0:Math.abs(Math.sin(t*9+o.x*0.02))*2),w,h);
+      ctx.restore(); ctx.globalAlpha=1;
     }else{
-      ctx.fillStyle='#141018';
+      ctx.save(); ctx.globalAlpha=alpha; ctx.fillStyle='#141018';
       ctx.fillRect(o.x,ground-o.h,o.w,o.h);
       ctx.beginPath(); ctx.arc(cx,ground-o.h-8,9,0,7); ctx.fill();
+      ctx.restore(); ctx.globalAlpha=1;
     }
   }
 
@@ -437,7 +463,7 @@
     const im=dead?SPR.dead:(!player.onGround?SPR.jump:
       (Math.floor(player.legT/Math.PI)%2===0?SPR.runA:SPR.runB));
     // 「時は今」発動中の桔梗の残光
-    if(charges>0&&!dead){
+    if(airJumps>BASE_AIR&&!dead){
       const gl=ctx.createRadialGradient(player.x,player.y-PH*0.5,4,player.x,player.y-PH*0.5,PH*0.75);
       gl.addColorStop(0,'rgba(127,180,216,.30)'); gl.addColorStop(1,'rgba(127,180,216,0)');
       ctx.fillStyle=gl;
