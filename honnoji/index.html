@@ -83,7 +83,7 @@
   <button id="skill">時は今</button>
   <div id="overlay">
     <div id="ttl">本能寺への道</div>
-    <div id="sub">タップ / スペースで跳ぶ ─ 敵は踏め<br>秘技「時は今」で、空中三段跳び<br>千歩先の本能寺まで、夜を駆けよ</div>
+    <div id="sub">右タップで跳ぶ ─ 篝火を越えよ<br>左タップで斬る ─ 敵を討て<br>秘技「時は今」で空中三段跳び ─ 千歩先の本能寺へ</div>
     <button id="btn" class="btn">駆け出す</button>
     <div id="actions" class="hidden">
       <a id="shareX" class="btn gold" target="_blank" rel="noopener">Xで戦果を伝える</a>
@@ -119,7 +119,7 @@
   // ---- スプライト(ちび光秀+流用の敵) ----
   const SPR={};
   for(const[k,src]of Object.entries({runA:'img/mitsu_runA.png',runB:'img/mitsu_runB.png',
-    jump:'img/mitsu_jump.png',dead:'img/mitsu_dead.png',
+    jump:'img/mitsu_jump.png',dead:'img/mitsu_dead.png',slash:'img/mitsu_slash.png',
     eYari:'img/enemy_yari.png',eKatana:'img/enemy_katana.png'})){
     const im=new Image(); im.src=src; SPR[k]=im;
   }
@@ -134,6 +134,8 @@
   const G=2100, JUMP=-760, GOAL=1000, KESSEN=800;
   const SKILL_CD=22;
   let skillCD=0, charges=0;
+  const SLASH_DUR=.26, SLASH_CDT=.38, SLASH_REACH=70;
+  let slashT=-1, slashCD=0, zoneHintT=0;
   const places=['亀山、発つ','老ノ坂を越える','桂川を渡る','夜が、白む','本能寺は、目前'];
   const placeAt=[0,220,440,660,KESSEN];
   let placeIdx=-1, placeTimer=0, pressBuf=-1e9;
@@ -186,7 +188,9 @@
     death:()=>tone(170,45,.6,'sawtooth',.1),
     skill:()=>{tone(660,660,.09,'triangle',.07);setTimeout(()=>tone(880,880,.09,'triangle',.07),80);
       setTimeout(()=>tone(1174,1568,.3,'triangle',.08),160)},
-    clear:()=>{[523,659,784,1046].forEach((f,i)=>setTimeout(()=>tone(f,f,.35,'triangle',.08),i*140))}
+    clear:()=>{[523,659,784,1046].forEach((f,i)=>setTimeout(()=>tone(f,f,.35,'triangle',.08),i*140))},
+    slash:()=>tone(1400,300,.09,'sawtooth',.035),
+    kill:()=>{tone(260,90,.11,'square',.09);setTimeout(()=>tone(1568,1568,.07,'triangle',.05),40)}
   };
 
   // ---- パーティクル/浮き文字 ----
@@ -202,6 +206,7 @@
   function reset(){
     dist=0; speed=baseSpeed; t=0; shake=0; obstacles=[]; embers=[]; parts=[]; floats=[];
     spawnT=.6; pressBuf=-1e9; kills=0; combo=0; comboT=0; freezeT=0; skillCD=0; charges=0;
+    slashT=-1; slashCD=0; zoneHintT=6;
     player.x=Math.min(W*0.24,180); player.y=ground; player.vy=0; player.onGround=true; player.legT=0;
     placeIdx=-1; placeTimer=0; placeEl.classList.remove('show');
     killsEl.textContent='';
@@ -257,6 +262,12 @@
     else if(!ov.classList.contains('hide')&&state!=='ready'){ /* 結果画面はボタンで再開 */ }
     else start();
   }
+  function slash(){
+    if(state!=='play'){ jump(); return; }
+    if(slashCD>0) return;
+    slashT=SLASH_DUR; slashCD=SLASH_CDT;
+    sfx.slash();
+  }
   function useSkill(){
     if(state!=='play'||skillCD>0||charges>0) return;
     charges=3; skillCD=SKILL_CD;
@@ -277,13 +288,28 @@
   shareX.addEventListener('click',()=>track('share'));
   document.getElementById('ytLink').addEventListener('click',()=>track('youtube'));
   skillEl.addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();audioUnlock();useSkill();});
-  wrap.addEventListener('pointerdown',e=>{e.preventDefault();audioUnlock();jump();});
+  wrap.addEventListener('pointerdown',e=>{e.preventDefault();audioUnlock();
+    if(state==='play'&&e.clientX<innerWidth/2) slash(); else jump();});
   addEventListener('keydown',e=>{
     if(e.code==='Space'||e.code==='ArrowUp'){e.preventDefault();audioUnlock();jump();}
+    if(e.code==='KeyZ'){e.preventDefault();audioUnlock();slash();}
     if(e.code==='KeyX'||e.code==='Enter'){e.preventDefault();audioUnlock();useSkill();}
   });
 
   // ---- 生成 ----
+  function killEnemy(o){
+    const ox=o.x, oy=ground-o.h;
+    o.dead=true; o.dy=0; o.da=1;
+    kills++; killsEl.textContent='討取 '+kills;
+    freezeT=.045; shake=Math.max(shake,3); sfx.kill();
+    burst(ox+o.w/2,oy+14,10,'#1a140e',240,3.2);
+    burst(ox+o.w/2,oy+14,5,'#B3402A',180,2.8);
+    if(comboT>0) combo++; else combo=1;
+    comboT=1.6;
+    if(combo>=2) float(ox+o.w/2,oy-38,combo+'連討ち！',24,'#B3402A',1);
+    else float(ox+o.w/2,oy-24,'討取！',20,'#B3402A',.8);
+  }
+
   function spawn(){
     const x=W+60, r=Math.random(), kessen=dist>=KESSEN;
     let type;
@@ -334,31 +360,36 @@
         spawnT = dist>=KESSEN ? .54+Math.random()*.22
                               : Math.max(.60,1.32-speed*0.0011)+Math.random()*.35; }
       // obstacles move
+      const eSpd=dist>=KESSEN?58:46;   // 決戦ゾーンの敵は突進が速い
       for(const o of obstacles){
-        o.x-=(speed+(o.type==='e'&&!o.dead?46:0))*dt;
+        o.x-=(speed+(o.type==='e'&&!o.dead?eSpd:0))*dt;
         if(o.type==='b') o.fire=Math.min(1,o.fire+dt*4);
         if(o.dead){ o.dy=(o.dy||0)+320*dt; o.da=(o.da===undefined?1:o.da)-2.4*dt; }
       }
       obstacles=obstacles.filter(o=>o.x+o.w>-30&&(o.da===undefined||o.da>0));
+      // 斬撃(発動後0.02〜0.16秒が刃の出ている時間)
+      zoneHintT-=dt;
+      if(slashCD>0) slashCD-=dt;
+      if(slashT>=0){
+        slashT-=dt;
+        const el=SLASH_DUR-slashT;
+        if(el>=0.02&&el<=0.16){
+          for(const o of obstacles){
+            if(o.dead||o.type!=='e') continue;
+            const ox=o.x, oy=ground-o.h;
+            if(ox<player.x+SLASH_REACH && ox+o.w>player.x+4 &&
+               player.y>oy-24 && player.y-54<ground){
+              killEnemy(o);
+            }
+          }
+        }
+      }
       // collision
       const px=player.x-13, pw=26, py=player.y-54, ph=54;
       for(const o of obstacles){
         if(o.dead) continue;
         const ox=o.x, oy=ground-o.h;
-        if(px<ox+o.w-3 && px+pw>ox+3 && py+ph>oy+4){
-          if(o.type==='e'&&player.vy>170&&player.y<oy+22){   // 踏みつけ討取
-            o.dead=true; o.dy=0; o.da=1;
-            player.vy=-560; player.onGround=false;
-            kills++; killsEl.textContent='討取 '+kills;
-            freezeT=.045; shake=Math.max(shake,3); sfx.stomp();
-            burst(ox+o.w/2,oy+14,10,'#1a140e',240,3.2);
-            burst(ox+o.w/2,oy+14,5,'#B3402A',180,2.8);
-            if(comboT>0) combo++; else combo=1;
-            comboT=1.6;
-            if(combo>=2) float(ox+o.w/2,oy-38,combo+'連討ち！',24,'#B3402A',1);
-            else float(ox+o.w/2,oy-24,'討取！',20,'#B3402A',.8);
-          }else{ endRun(false); break; }
-        }
+        if(px<ox+o.w-3 && px+pw>ox+3 && py+ph>oy+4){ endRun(false); break; }
       }
       // embers
       if(!reduce) for(const o of obstacles){
@@ -412,6 +443,21 @@
     for(const e of embers){ ctx.fillStyle='rgba(201,162,39,'+Math.max(0,e.life)+')';
       ctx.beginPath(); ctx.arc(e.x,e.y,e.r,0,7); ctx.fill(); }
     drawPlayer();
+    // 操作ゾーンのガイド(走り始めの数秒だけ)
+    if(state==='play'&&zoneHintT>0){
+      const a=Math.min(1,zoneHintT/2)*0.4;
+      ctx.save(); ctx.strokeStyle='rgba(232,223,200,'+(a*.5).toFixed(2)+')';
+      ctx.setLineDash([6,8]); ctx.lineWidth=1;
+      ctx.beginPath(); ctx.moveTo(W/2,H*0.58); ctx.lineTo(W/2,H*0.94); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.font='600 '+Math.min(W,H)*0.045+'px '+MINCHO;
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillStyle='rgba(179,64,42,'+a+')';
+      ctx.fillText('斬る',W*0.25,H*0.70);
+      ctx.fillStyle='rgba(232,223,200,'+a+')';
+      ctx.fillText('跳ぶ',W*0.75,H*0.70);
+      ctx.restore();
+    }
     // パーティクル
     for(const p of parts){ ctx.globalAlpha=Math.max(0,1-p.t/p.life); ctx.fillStyle=p.color;
       ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,7); ctx.fill(); }
@@ -459,8 +505,18 @@
 
   function drawPlayer(){
     const dead=(state==='over');
-    const im=dead?SPR.dead:(!player.onGround?SPR.jump:
-      (Math.floor(player.legT/Math.PI)%2===0?SPR.runA:SPR.runB));
+    const im=dead?SPR.dead:(slashT>=0&&imgOk(SPR.slash)?SPR.slash:(!player.onGround?SPR.jump:
+      (Math.floor(player.legT/Math.PI)%2===0?SPR.runA:SPR.runB)));
+    // 剣閃
+    if(slashT>=0&&!dead){
+      const el=SLASH_DUR-slashT, k=Math.min(1,el/0.16), a=Math.max(0,1-el/SLASH_DUR);
+      ctx.save(); ctx.translate(player.x+30,player.y-46);
+      ctx.strokeStyle='rgba(232,223,200,'+(a*.9).toFixed(2)+')'; ctx.lineWidth=5; ctx.lineCap='round';
+      ctx.beginPath(); ctx.arc(0,0,42,-1.25+k*1.15,-0.75+k*1.5); ctx.stroke();
+      ctx.strokeStyle='rgba(201,162,39,'+(a*.6).toFixed(2)+')'; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.arc(0,0,50,-1.2+k*1.15,-0.8+k*1.5); ctx.stroke();
+      ctx.restore();
+    }
     // 「時は今」発動中の桔梗の残光
     if(charges>0&&!dead){
       const gl=ctx.createRadialGradient(player.x,player.y-PH*0.5,4,player.x,player.y-PH*0.5,PH*0.75);
