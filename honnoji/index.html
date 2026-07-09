@@ -107,8 +107,26 @@
   const places=['亀山、発つ','老ノ坂を越える','桂川を渡る','夜が、白む','本能寺は、目前'];
   const placeAt=[0,220,440,660,KESSEN];
   let placeIdx=-1, placeTimer=0, pressBuf=-1e9;
-  const GC='';  // 計測エンドポイント(GoatCounter)。空なら無効
+  // 計測(GoatCounter)。本番ホスト以外では送らない(テストで数字を汚さない)
+  const GC=location.hostname==='kaminavi-jp.github.io'?'https://cinema-emaki.goatcounter.com/count':'';
   function track(ev){ if(!GC) return; try{ new Image().src=GC+'?p='+encodeURIComponent('/honnoji/'+ev)+'&r='+Date.now(); }catch(e){} }
+  async function gcCount(path){
+    try{
+      const r=await fetch('https://cinema-emaki.goatcounter.com/counter/'+path+'.json');
+      if(!r.ok) return null;
+      const n=parseInt(String((await r.json()).count).replace(/[^0-9]/g,''),10);
+      return isNaN(n)?null:n;
+    }catch(e){ return null; }
+  }
+  async function showOdds(cleared){
+    const[runs,clears]=await Promise.all([gcCount('/honnoji/run'),gcCount('/honnoji/clear')]);
+    if(runs===null||clears===null||runs<5) return;
+    if(state!=='over'&&state!=='clear') return;
+    const line=cleared
+      ?'本能寺の変 成功率 '+((clears/runs*100)<0.1?(clears/runs*100).toFixed(2):(clears/runs*100).toFixed(1))+'%'
+      :'これまで'+runs.toLocaleString('ja-JP')+'度の夜駆けで、本能寺に至った者 '+clears.toLocaleString('ja-JP')+'人';
+    sub.innerHTML+='<br><span style="opacity:.65;font-size:.82em">'+line+'</span>';
+  }
   function rankOf(s){ return s>=GOAL?'本能寺一番槍':s>=KESSEN?'本能寺を目前にせし者':s>=660?'夜明けを見し者':s>=440?'桂川を渡りし者':s>=220?'老ノ坂を越えし者':'亀山の霧に散りし者'; }
 
   try{ best=parseInt(localStorage.getItem('honnoji_best'))||0; }catch(e){}
@@ -150,6 +168,7 @@
     shareX.href='https://twitter.com/intent/tweet?text='+encodeURIComponent(text)+'&url='+encodeURIComponent(PAGE_URL);
     actions.classList.remove('hidden');
     ov.classList.remove('hide');
+    showOdds(clear);
   }
 
   function jump(){
