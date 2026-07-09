@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>むしゃばしり！サバイバー試作</title>
+<style>
+html,body{margin:0;height:100%;background:#0f130d;overflow:hidden;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+#wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}
+canvas{display:block}
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="game"></canvas></div>
+<script>
+'use strict';
+//==================== 基本 ====================
+const W=540,H=960;
+const INK='#241f19',SHU='#a63c2b',GOLD='#c79a3a',XPC='#5db6d6',HPC='#c0503f';
+const SERIF='"Yu Mincho","Hiragino Mincho ProN","Noto Serif JP",serif';
+const cvs=document.getElementById('game'),ctx=cvs.getContext('2d');
+const dpr=Math.min(2,window.devicePixelRatio||1);
+function resize(){const s=Math.min(innerWidth/W,innerHeight/H);cvs.style.width=(W*s)+'px';cvs.style.height=(H*s)+'px';cvs.width=Math.round(W*dpr);cvs.height=Math.round(H*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);}
+addEventListener('resize',resize);resize();
+
+//==================== スプライト ====================
+const SP={};let ready=false;
+(function(){const defs={runA:'../img/shika_runA.png',runB:'../img/shika_runB.png',eYari:'../img/enemy_yari.png',eKatana:'../img/enemy_katana.png',koban:'../img/item_koban.png'};let n=0,t=Object.keys(defs).length;for(const[k,s]of Object.entries(defs)){const im=new Image();im.onload=()=>{if(++n===t)ready=true};im.src=s;SP[k]=im;}})();
+function ok(im){return im&&im.naturalWidth>0}
+
+//==================== 音 ====================
+let AC=null;function unlock(){if(!AC){try{AC=new(window.AudioContext||window.webkitAudioContext)()}catch(e){}}if(AC&&AC.state==='suspended')AC.resume();}
+function tone(f0,f1,d,ty,v){if(!AC)return;const t=AC.currentTime,o=AC.createOscillator(),g=AC.createGain();o.type=ty;o.frequency.setValueAtTime(f0,t);o.frequency.exponentialRampToValueAtTime(Math.max(30,f1),t+d);g.gain.setValueAtTime(v,t);g.gain.exponentialRampToValueAtTime(.001,t+d);o.connect(g).connect(AC.destination);o.start(t);o.stop(t+d+.02);}
+const sfx={sweep:()=>tone(300,140,.12,'square',.05),shuriken:()=>tone(700,400,.07,'square',.05),gun:()=>tone(150,50,.14,'sawtooth',.09),hit:()=>tone(200,90,.1,'sawtooth',.05),xp:()=>tone(880,1200,.05,'triangle',.04),lvl:()=>{tone(660,660,.1,'triangle',.08);setTimeout(()=>tone(990,1320,.2,'triangle',.08),90)},hurt:()=>tone(240,80,.2,'sawtooth',.12),die:()=>tone(180,50,.6,'sawtooth',.14)};
+
+//==================== 状態 ====================
+let state='title'; // title|run|levelup|dead
+const cam={x:0,y:0};
+const P={x:0,y:0,hp:100,maxhp:100,spd:150,face:1,leg:0,inv:0,
+  lvl:1,xp:0,xpNext:5,kills:0,coins:0,
+  pickR:74,dmgMul:1,cdMul:1,
+  weapons:[]}; // {id,name,cd,timer,lv,...}
+let enemies=[],gems=[],shots=[],hits=[],floats=[],cards=[];
+const R={t:0,spawnT:0,shakeT:0,shakeA:0,overlayT:0};
+let best=0;try{best=+localStorage.getItem('musha_surv_best')||0}catch(e){}
+
+//==================== 武器定義 ====================
+const WEAPONS={
+  yari:{name:'槍薙ぎ',cd:1.0,base:{dmg:9,r:96},desc:'周囲を薙ぎ払う',
+    fire(w){const r=w.r+(w.lv-1)*10,dmg=w.dmg*P.dmgMul;let hit=0;
+      for(const e of enemies){if(e.dead)continue;if(dist2(e,P)<r*r){damage(e,dmg);hit++}}
+      hits.push({type:'sweep',x:P.x,y:P.y,r,t:0,life:.22,face:P.face});sfx.sweep();}},
+  shuriken:{name:'手裏剣',cd:1.3,base:{dmg:7,n:1,spd:340},desc:'最寄りの敵へ投げる',
+    fire(w){const tg=nearest();for(let i=0;i<w.n;i++){const a=tg?Math.atan2(tg.y-P.y,tg.x-P.x):0;const sp=a+(i-(w.n-1)/2)*.24;
+      shots.push({x:P.x,y:P.y,vx:Math.cos(sp)*w.spd,vy:Math.sin(sp)*w.spd,dmg:w.dmg*P.dmgMul,r:12,life:1.4,pierce:1+Math.floor(w.lv/3),kind:'shuriken',hitset:new Set()});}sfx.shuriken();}},
+  teppo:{name:'火縄銃',cd:1.8,base:{dmg:20,spd:620},desc:'正面へ強力な一撃',
+    fire(w){const tg=nearest();const a=tg?Math.atan2(tg.y-P.y,tg.x-P.x):(P.face>0?0:Math.PI);
+      shots.push({x:P.x,y:P.y,vx:Math.cos(a)*w.spd,vy:Math.sin(a)*w.spd,dmg:w.dmg*P.dmgMul,r:16,life:1.2,pierce:99,kind:'teppo',hitset:new Set()});sfx.gun();
+      hits.push({type:'muzzle',x:P.x+Math.cos(a)*30,y:P.y+Math.sin(a)*30,t:0,life:.12});}}
+};
+function giveWeapon(id){const b=WEAPONS[id].base;const w=Object.assign({id,name:WEAPONS[id].name,cd:WEAPONS[id].cd,timer:0,lv:1},JSON.parse(JSON.stringify(b)));P.weapons.push(w);}
+function hasWeapon(id){return P.weapons.find(w=>w.id===id)}
+
+//==================== パーク定義 ====================
+function perkPool(){
+  const list=[];
+  for(const id of ['shuriken','teppo']){const w=hasWeapon(id);
+    if(!w)list.push({rarity:'武器',name:'新武器『'+WEAPONS[id].name+'』',desc:WEAPONS[id].desc,apply:()=>giveWeapon(id)});
+    else if(w.lv<5)list.push({rarity:'強化',name:WEAPONS[id].name+' Lv'+(w.lv+1),desc:'威力+・追加効果',apply:()=>{w.lv++;w.dmg=Math.round(w.dmg*1.25);if(w.n!==undefined&&w.lv%2===0)w.n++;}});}
+  const y=hasWeapon('yari');if(y&&y.lv<6)list.push({rarity:'強化',name:'槍薙ぎ Lv'+(y.lv+1),desc:'威力+・範囲+',apply:()=>{y.lv++;y.dmg=Math.round(y.dmg*1.22)}});
+  list.push({rarity:'心得',name:'脚力',desc:'移動速度 +12%',apply:()=>P.spd*=1.12});
+  list.push({rarity:'心得',name:'気迫',desc:'与ダメージ +15%',apply:()=>P.dmgMul*=1.15});
+  list.push({rarity:'心得',name:'手練',desc:'攻撃間隔 -12%',apply:()=>P.cdMul*=0.88});
+  list.push({rarity:'心得',name:'集財',desc:'回収範囲 +30%',apply:()=>P.pickR*=1.3});
+  list.push({rarity:'心得',name:'頑健',desc:'最大体力+20・全回復',apply:()=>{P.maxhp+=20;P.hp=P.maxhp}});
+  return list;
+}
+function drawCards(){cards=[];const pool=perkPool();for(let i=0;i<3&&pool.length;i++){const k=Math.floor(Math.random()*pool.length);cards.push(pool.splice(k,1)[0]);}}
+
+//==================== 開始 ====================
+function start(){
+  state='run';
+  Object.assign(P,{x:0,y:0,hp:100,maxhp:100,spd:150,face:1,leg:0,inv:0,lvl:1,xp:0,xpNext:5,kills:0,coins:0,pickR:74,dmgMul:1,cdMul:1,weapons:[]});
+  enemies=[];gems=[];shots=[];hits=[];floats=[];cards=[];
+  Object.assign(R,{t:0,spawnT:.5,shakeT:0,shakeA:0,overlayT:0});
+  giveWeapon('yari');
+}
+function shake(t,a){R.shakeT=Math.max(R.shakeT,t);R.shakeA=a}
+function dist2(a,b){const dx=a.x-b.x,dy=a.y-b.y;return dx*dx+dy*dy}
+function nearest(){let n=null,bd=1e18;for(const e of enemies){if(e.dead)continue;const d=dist2(e,P);if(d<bd){bd=d;n=e}}return n}
+function damage(e,d){e.hp-=d;floats.push({x:e.x,y:e.y-40,txt:Math.round(d),t:0,life:.6,size:18,col:'#fff',vy:-40});
+  if(e.hp<=0&&!e.dead){e.dead=true;e.dieT=0;P.kills++;shake(.04,2);
+    gems.push({x:e.x,y:e.y,val:e.xp,vx:(Math.random()-.5)*40,vy:-60,t:0});
+    if(Math.random()<.10)gems.push({x:e.x+8,y:e.y,coin:true,vx:(Math.random()-.5)*40,vy:-70,t:0});}}
+
+//==================== 敵 ====================
+function spawn(){
+  const m=R.t;
+  const n=1+Math.floor(m/25);
+  for(let i=0;i<n;i++){
+    const a=Math.random()*6.283,rad=560+Math.random()*80;
+    const katana=m>60&&Math.random()<.3;
+    const hp=(katana?26:14)+m*1.1;
+    enemies.push({x:P.x+Math.cos(a)*rad,y:P.y+Math.sin(a)*rad,kind:katana?'katana':'yari',
+      hp,maxhp:hp,spd:(katana?74:58)+Math.min(40,m*.3),r:26,dead:false,dieT:0,xp:katana?3:1,touch:katana?14:9,face:1});
+  }
+  R.spawnT=Math.max(.35,1.4-m*.012);
+}
+
+//==================== 更新 ====================
+let joy=null; // {ox,oy,dx,dy,active}
+function update(dt){
+  if(R.shakeT>0)R.shakeT-=dt;
+  for(const f of floats){f.t+=dt;f.y+=(f.vy||0)*dt}floats=floats.filter(f=>f.t<f.life);
+  for(const h of hits){h.t+=dt}hits=hits.filter(h=>h.t<h.life);
+  if(state!=='run')return;
+  R.t+=dt;
+  // 移動
+  let mvx=0,mvy=0;
+  if(joy&&joy.active){const m=Math.hypot(joy.dx,joy.dy);if(m>6){mvx=joy.dx/m;mvy=joy.dy/m}}
+  P.x+=mvx*P.spd*dt;P.y+=mvy*P.spd*dt;
+  if(mvx!==0||mvy!==0){P.leg+=dt*10;if(mvx!==0)P.face=mvx>0?1:-1}
+  if(P.inv>0)P.inv-=dt;
+  cam.x=P.x-W/2;cam.y=P.y-H/2;
+  // 武器
+  for(const w of P.weapons){w.timer-=dt;if(w.timer<=0){WEAPONS[w.id].fire(w);w.timer=w.cd*P.cdMul}}
+  // 敵
+  R.spawnT-=dt;if(R.spawnT<=0)spawn();
+  for(const e of enemies){
+    if(e.dead){e.dieT+=dt;continue}
+    const dx=P.x-e.x,dy=P.y-e.y,d=Math.hypot(dx,dy)||1;
+    e.x+=dx/d*e.spd*dt;e.y+=dy/d*e.spd*dt;e.face=dx>0?1:-1;
+    if(d<e.r+16&&P.inv<=0){P.hp-=e.touch;P.inv=.6;shake(.12,4);sfx.hurt();
+      floats.push({x:P.x,y:P.y-56,txt:'-'+e.touch,t:0,life:.7,size:18,col:HPC,vy:-30});
+      if(P.hp<=0){P.hp=0;die()}}
+  }
+  enemies=enemies.filter(e=>!e.dead||e.dieT<.4);
+  // 弾
+  for(const s of shots){s.x+=s.vx*dt;s.y+=s.vy*dt;s.life-=dt;
+    for(const e of enemies){if(e.dead||s.hitset.has(e))continue;if(dist2(e,s)<(e.r+s.r)*(e.r+s.r)){damage(e,s.dmg);s.hitset.add(e);s.pierce--;if(s.pierce<=0){s.life=0;break}}}}
+  shots=shots.filter(s=>s.life>0);
+  // 珠・小判
+  for(const g of gems){
+    g.t+=dt;
+    if(g.t<.4){g.x+=g.vx*dt;g.y+=g.vy*dt;g.vy+=300*dt}
+    const d=Math.hypot(P.x-g.x,P.y-g.y);
+    if(d<P.pickR){g.x+=(P.x-g.x)/d*Math.min(420,d*8)*dt;g.y+=(P.y-g.y)/d*Math.min(420,d*8)*dt}
+    if(d<20){g.got=true;if(g.coin){P.coins++;}else{addXp(g.val);sfx.xp()}}
+  }
+  gems=gems.filter(g=>!g.got);
+}
+function addXp(v){P.xp+=v;while(P.xp>=P.xpNext){P.xp-=P.xpNext;P.lvl++;P.xpNext=Math.floor(P.xpNext*1.35+3);levelUp()}}
+function levelUp(){state='levelup';drawCards();sfx.lvl();}
+function pickCard(i){if(!cards[i])return;cards[i].apply();state='run';cards=[];}
+function die(){if(state==='dead')return;state='dead';R.overlayT=0;sfx.die();shake(.4,8);
+  const m=Math.floor(R.t);if(m>best){best=m;try{localStorage.setItem('musha_surv_best',best)}catch(e){}}}
+
+//==================== 描画 ====================
+function txt(s,x,y,sz,c,al,w,a){ctx.save();ctx.globalAlpha=a??1;ctx.font=(w||'700')+' '+sz+'px '+SERIF;ctx.fillStyle=c;ctx.textAlign=al||'center';ctx.textBaseline='middle';ctx.fillText(s,x,y);ctx.restore();}
+function drawGround(){
+  ctx.fillStyle='#5f7d3f';ctx.fillRect(0,0,W,H);
+  const T=96;ctx.strokeStyle='rgba(30,45,20,.25)';ctx.lineWidth=2;
+  const ox=-(cam.x%T),oy=-(cam.y%T);
+  ctx.beginPath();for(let x=ox-T;x<W+T;x+=T){ctx.moveTo(x,0);ctx.lineTo(x,H)}for(let y=oy-T;y<H+T;y+=T){ctx.moveTo(0,y);ctx.lineTo(W,y)}ctx.stroke();
+  // 草の点
+  ctx.fillStyle='rgba(40,60,28,.4)';
+  for(let gx=Math.floor(cam.x/T)-1;gx<Math.floor((cam.x+W)/T)+1;gx++)for(let gy=Math.floor(cam.y/T)-1;gy<Math.floor((cam.y+H)/T)+1;gy++){
+    const sx=(gx*73%50+50)%50,sy=(gy*yhash(gx,gy));const px=gx*T+sx-cam.x,py=gy*T+(gy*29%60)-cam.y;ctx.fillRect(px,py,4,7);}
+}
+function yhash(a,b){return ((a*31+b*17)%60+60)%60}
+function drawChar(im,wx,wy,face,scale,alpha,rot){
+  const h=(scale||1)*118,w=ok(im)?im.naturalWidth*h/im.naturalHeight:60;
+  const sx=wx-cam.x,sy=wy-cam.y;
+  ctx.save();ctx.translate(sx,sy);if(rot)ctx.rotate(rot);ctx.globalAlpha=alpha??1;ctx.scale(face,1);
+  if(ok(im))ctx.drawImage(im,-w/2,-h,w,h);ctx.restore();
+}
+function draw(){
+  const shaken=R.shakeT>0;if(shaken){ctx.save();ctx.translate((Math.random()-.5)*R.shakeA*2,(Math.random()-.5)*R.shakeA*2)}
+  drawGround();
+  // 珠・小判
+  for(const g of gems){const sx=g.x-cam.x,sy=g.y-cam.y;if(g.coin){if(ok(SP.koban)){const w=22,h=SP.koban.naturalHeight*w/SP.koban.naturalWidth;ctx.drawImage(SP.koban,sx-w/2,sy-h/2,w,h)}}else{ctx.save();ctx.fillStyle=XPC;ctx.translate(sx,sy);ctx.rotate(.78);ctx.fillRect(-5,-5,10,10);ctx.restore();}}
+  // 敵
+  for(const e of enemies){const im=e.kind==='katana'?SP.eKatana:SP.eYari;
+    if(e.dead){drawChar(im,e.x,e.y,e.face,1,Math.max(0,1-e.dieT*2.5),e.dieT*3);continue}
+    drawChar(im,e.x,e.y,e.face,1,1);
+    // HPバー
+    if(e.hp<e.maxhp){const sx=e.x-cam.x,sy=e.y-cam.y;ctx.fillStyle='rgba(0,0,0,.4)';ctx.fillRect(sx-16,sy-h_(im),32,4);ctx.fillStyle=HPC;ctx.fillRect(sx-16,sy-h_(im),32*Math.max(0,e.hp/e.maxhp),4)}
+  }
+  // 薙ぎ払い等
+  for(const hh of hits){
+    const sx=hh.x-cam.x,sy=hh.y-cam.y,k=hh.t/hh.life;
+    if(hh.type==='sweep'){ctx.save();ctx.globalAlpha=Math.max(0,1-k)*.7;ctx.strokeStyle='#f4ecd8';ctx.lineWidth=12;ctx.beginPath();ctx.arc(sx,sy,hh.r*(.6+k*.5),0,6.283);ctx.stroke();ctx.restore();}
+    else if(hh.type==='muzzle'){ctx.save();ctx.globalAlpha=1-k;ctx.fillStyle=GOLD;ctx.beginPath();ctx.arc(sx,sy,12*(1-k)+4,0,6.283);ctx.fill();ctx.restore();}
+  }
+  // 弾
+  for(const s of shots){const sx=s.x-cam.x,sy=s.y-cam.y;ctx.save();
+    if(s.kind==='shuriken'){ctx.translate(sx,sy);ctx.rotate(R.t*20);ctx.fillStyle=INK;ctx.fillRect(-9,-2,18,4);ctx.fillRect(-2,-9,4,18);}
+    else{ctx.fillStyle=INK;ctx.beginPath();ctx.arc(sx,sy,6,0,6.283);ctx.fill();ctx.strokeStyle=GOLD;ctx.globalAlpha=.5;ctx.beginPath();ctx.moveTo(sx-s.vx*.03,sy-s.vy*.03);ctx.lineTo(sx,sy);ctx.lineWidth=4;ctx.stroke();}
+    ctx.restore();}
+  // プレイヤー
+  if(state!=='title'){const blink=P.inv>0&&Math.floor(R.t*16)%2===0;const im=(Math.floor(P.leg/Math.PI)%2===0)?SP.runA:SP.runB;if(!blink)drawChar(im,P.x,P.y,P.face,1,state==='dead'?Math.max(0,1-R.overlayT):1,state==='dead'?R.overlayT*2:0);}
+  // 浮き文字
+  for(const f of floats){const sx=f.x-cam.x,sy=f.y-cam.y,a=f.t<f.life-.3?1:Math.max(0,(f.life-f.t)/.3);txt(f.txt,sx,sy,f.size,f.col,'center','800',a);}
+  if(shaken)ctx.restore();
+  if(state==='run'||state==='levelup')drawHUD();
+  if(joy&&joy.active&&state==='run')drawJoy();
+  if(state==='levelup')drawLevelUp();
+  if(state==='title')drawTitle();
+  if(state==='dead'&&R.overlayT>.6)drawResult();
+}
+function h_(im){return (ok(im)?im.naturalHeight*118/im.naturalWidth:60)*0+92}
+function drawHUD(){
+  // XPバー(上端)
+  ctx.fillStyle='rgba(20,25,15,.6)';ctx.fillRect(0,0,W,20);
+  ctx.fillStyle=XPC;ctx.fillRect(0,0,W*Math.min(1,P.xp/P.xpNext),20);
+  txt('Lv '+P.lvl,W/2,10,13,'#fff','center','800');
+  // 時間
+  const m=Math.floor(R.t/60),s=Math.floor(R.t%60);
+  txt((m<10?'0':'')+m+':'+(s<10?'0':'')+s,W/2,44,26,'#fff','center','800');
+  // HP
+  ctx.fillStyle='rgba(20,25,15,.6)';ctx.fillRect(20,64,200,18);
+  ctx.fillStyle=HPC;ctx.fillRect(20,64,200*Math.max(0,P.hp/P.maxhp),18);
+  ctx.strokeStyle='#fff';ctx.lineWidth=1;ctx.strokeRect(20,64,200,18);
+  txt(Math.ceil(P.hp)+'/'+P.maxhp,120,73,12,'#fff','center','700');
+  txt('討取 '+P.kills+'　小判 '+P.coins,W-24,73,15,'#fff','right','700');
+}
+function drawJoy(){ctx.save();ctx.globalAlpha=.35;ctx.strokeStyle='#fff';ctx.lineWidth=3;ctx.beginPath();ctx.arc(joy.ox,joy.oy,52,0,6.283);ctx.stroke();
+  const m=Math.hypot(joy.dx,joy.dy),cl=Math.min(52,m);const nx=m>0?joy.dx/m:0,ny=m>0?joy.dy/m:0;
+  ctx.globalAlpha=.55;ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(joy.ox+nx*cl,joy.oy+ny*cl,22,0,6.283);ctx.fill();ctx.restore();}
+function drawLevelUp(){
+  ctx.save();ctx.fillStyle='rgba(15,19,13,.82)';ctx.fillRect(0,0,W,H);ctx.restore();
+  txt('レベルアップ！',W/2,150,34,GOLD,'center','800');
+  txt('一つ選べ',W/2,192,18,'#fff','center','600',.8);
+  const rc=['武器','強化','心得'];const cols={'武器':'#3a6ea5','強化':'#7a4fa0','心得':'#3f7a4a'};
+  for(let i=0;i<cards.length;i++){const c=cards[i];const y=250+i*200,x=50,w=W-100,h=180;
+    ctx.fillStyle='rgba(240,233,215,.97)';ctx.fillRect(x,y,w,h);
+    ctx.fillStyle=cols[c.rarity]||'#555';ctx.fillRect(x,y,w,40);
+    txt(c.rarity,x+w/2,y+20,18,'#fff','center','800');
+    txt(c.name,x+w/2,y+80,24,INK,'center','800');
+    txt(c.desc,x+w/2,y+124,17,'#5a4e3a','center','600');
+    ctx.strokeStyle=cols[c.rarity]||'#555';ctx.lineWidth=3;ctx.strokeRect(x,y,w,h);
+  }
+}
+function drawTitle(){
+  ctx.fillStyle='rgba(15,19,13,.6)';ctx.fillRect(0,0,W,H);
+  txt('むしゃばしり！',W/2,260,50,'#f4ecd8','center','800');
+  txt('― サバイバー試作 ―',W/2,315,20,GOLD,'center','700');
+  txt('動かして戦うだけ・武器は自動発動',W/2,420,20,'#fff','center','600');
+  txt('画面をドラッグで移動（バーチャルスティック）',W/2,458,17,'#fff','center','600',.85);
+  txt('経験の珠でレベルUP→パークを選んで強化',W/2,500,17,'#fff','center','600',.85);
+  txt('武将＝キャラ／家宝＝レリック（今後）',W/2,548,15,GOLD,'center','600',.8);
+  txt('自己最長 '+Math.floor(best/60)+':'+((best%60)<10?'0':'')+(best%60),W/2,620,22,'#f4ecd8','center','800');
+  if(Math.floor(performance.now()/500)%2===0)txt('― タップして出陣 ―',W/2,720,24,SHU,'center','800');
+}
+function drawResult(){
+  const a=Math.min(1,(R.overlayT-.6)/.4);ctx.save();ctx.globalAlpha=a;
+  ctx.fillStyle='rgba(15,19,13,.75)';ctx.fillRect(0,0,W,H);
+  const m=Math.floor(R.t/60),s=Math.floor(R.t%60);
+  txt('討死',W/2,300,44,SHU,'center','800');
+  txt('生存 '+(m<10?'0':'')+m+':'+(s<10?'0':'')+s,W/2,380,40,'#f4ecd8','center','800');
+  txt('討取 '+P.kills+'　Lv '+P.lvl+'　小判 '+P.coins,W/2,436,22,'#fff','center','700');
+  txt('自己最長 '+Math.floor(best/60)+':'+((best%60)<10?'0':'')+(best%60),W/2,480,17,'#fff','center','600',.8);
+  if(Math.floor(performance.now()/600)%2===0)txt('― タップで再び ―',W/2,600,22,SHU,'center','700');
+  ctx.restore();
+}
+
+//==================== 入力 ====================
+function screenToCanvas(cx,cy){const rc=cvs.getBoundingClientRect();return[(cx-rc.left)/rc.width*W,(cy-rc.top)/rc.height*H]}
+cvs.addEventListener('pointerdown',e=>{e.preventDefault();unlock();const[x,y]=screenToCanvas(e.clientX,e.clientY);
+  if(state==='title'){start();return}
+  if(state==='dead'){if(R.overlayT>.6)start();return}
+  if(state==='levelup'){for(let i=0;i<cards.length;i++){const cy=250+i*200;if(y>=cy&&y<=cy+180)pickCard(i)}return}
+  joy={ox:x,oy:y,dx:0,dy:0,active:true,id:e.pointerId};
+});
+cvs.addEventListener('pointermove',e=>{if(joy&&joy.active&&e.pointerId===joy.id){const[x,y]=screenToCanvas(e.clientX,e.clientY);joy.dx=x-joy.ox;joy.dy=y-joy.oy;}});
+function endJoy(e){if(joy&&e.pointerId===joy.id)joy=null}
+cvs.addEventListener('pointerup',e=>{e.preventDefault();endJoy(e)});
+cvs.addEventListener('pointercancel',endJoy);
+addEventListener('keydown',e=>{const k={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]}[e.code];if(k){joy={ox:0,oy:0,dx:k[0]*50,dy:k[1]*50,active:true,id:-1}}if(e.code==='Space'){if(state==='title'||state==='dead')start()}});
+addEventListener('keyup',e=>{if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.code))joy=null});
+document.addEventListener('touchmove',e=>e.preventDefault(),{passive:false});
+
+//==================== ループ ====================
+let tp=performance.now();window.__errs=[];
+function loop(t){let dt=(t-tp)/1000;tp=t;if(dt>.05)dt=.05;try{update(dt);if(state==='dead')R.overlayT+=dt;draw()}catch(e){window.__errs.push(String(e.stack||e.message));console.error(e)}requestAnimationFrame(loop)}
+requestAnimationFrame(loop);
+window.G={P,R,start,levelUp,pickCard,draw,update,giveWeapon,get state(){return state},get enemies(){return enemies},get gems(){return gems},get cards(){return cards},get ready(){return ready},setJoy(dx,dy){joy={ox:0,oy:0,dx,dy,active:true,id:-9}}};
+</script>
+</body>
+</html>
