@@ -91,12 +91,49 @@ const sfx={
   revive:()=>{tone(660,660,.1,'sine',.09);setTimeout(()=>tone(880,880,.1,'sine',.09),90);setTimeout(()=>tone(1320,1760,.28,'sine',.1),180)},
   warn:()=>tone(1250,950,.1,'square',.06),
   shot:()=>tone(130,55,.16,'sawtooth',.13),
-  coin:()=>tone(1050,1500,.09,'triangle',.07)
+  coin:()=>tone(1050,1500,.09,'triangle',.07),
+  koban:()=>{tone(880,880,.09,'triangle',.09);setTimeout(()=>tone(1174,1174,.09,'triangle',.09),80);setTimeout(()=>tone(1760,1760,.22,'triangle',.1),160)},
+  wave:()=>{tone(196,196,.25,'sawtooth',.08);setTimeout(()=>tone(196,150,.35,'sawtooth',.1),220)}
 };
+//---- BGM(生成音: 太鼓+拍子木+琴) ----
+let bgmOn=false,bgmStep=0;
+const KOTO=[220,246.9,261.6,329.6,349.2,440,523.3];
+function bgmNote(t,f,dur,type,vol){
+  const o=AC.createOscillator(),g=AC.createGain();
+  o.type=type;o.frequency.setValueAtTime(f,t);
+  g.gain.setValueAtTime(vol,t);g.gain.exponentialRampToValueAtTime(.001,t+dur);
+  o.connect(g).connect(AC.destination);o.start(t);o.stop(t+dur+.02);
+}
+function startBgm(){
+  if(bgmOn||!AC)return;bgmOn=true;
+  const step=60/132/2;let next=AC.currentTime+.1;
+  setInterval(()=>{
+    if(!AC||document.hidden)return;
+    while(next<AC.currentTime+.3){
+      const s=bgmStep%16;
+      if(s===0)bgmNote(next,82,.16,'sine',.16);          // 太鼓(強)
+      if(s===6||s===10)bgmNote(next,70,.12,'sine',.1);   // 太鼓(弱)
+      if(s===4||s===12)bgmNote(next,1900,.03,'square',.022); // 拍子木
+      if(s%2===0&&Math.random()<.42)                     // 琴
+        bgmNote(next,KOTO[(Math.random()*KOTO.length)|0],.5,'triangle',.032);
+      next+=step;bgmStep++;
+    }
+  },110);
+}
 
 //==================== 状態 ====================
 let state='title';           // title | run(死亡演出含む)
 let tsc=1,slowT=0;           // スロー演出
+let freezeT=0;               // ヒットストップ
+let shakeT=0,shakeAmp=0;     // 画面揺れ
+let parts=[];                // パーティクル(墨飛沫・土煙・煌めき)
+let slines=[];               // スピードライン
+for(let i=0;i<8;i++)slines.push({x:Math.random()*W,y:60+Math.random()*640,len:70+Math.random()*110});
+function shake(t,amp){shakeT=Math.max(shakeT,t);shakeAmp=amp}
+function burst(x,y,n,color,spd,r){
+  for(let i=0;i<n;i++){const a=Math.random()*6.283,v=spd*(.4+Math.random()*.9);
+    parts.push({x,y,vx:Math.cos(a)*v,vy:Math.sin(a)*v-60,life:.35+Math.random()*.3,t:0,color,r:r*(.6+Math.random()*.8)})}
+}
 const player={y:GROUND,vy:0,jumps:0,leg:0,alive:true,inv:0,revive:true,rot:0};
 const run={px:0,t:0,speed:330,kills:0,spawnT:1.4,shotT:999,shotWarn:0,
   overlayT:0,line:'',gained:0,newBest:false,nearFlash:0,reviveFlash:0,milestone:0};
@@ -164,10 +201,13 @@ function histLine(m){
 function startRun(){
   state='run';
   Object.assign(player,{y:GROUND,vy:0,jumps:0,leg:0,alive:true,inv:0,revive:true,rot:0});
-  Object.assign(run,{px:0,t:0,speed:330,kills:0,rice:0,kokuGain:0,riceT:2,
+  Object.assign(run,{px:0,t:0,speed:330,kills:0,rice:0,koban:0,kokuGain:0,riceT:2,
     spawnT:1.5,shotT:18+Math.random()*6,shotWarn:0,muzzle:0,
+    combo:0,comboT:0,comboBonus:0,
+    waveNext:320+Math.random()*120,waveT:0,calmT:0,
     overlayT:0,line:'',newBest:false,nearFlash:0,reviveFlash:0,milestone:0});
-  obstacles=[];bullets=[];floats=[];rices=[];
+  obstacles=[];bullets=[];floats=[];rices=[];parts=[];
+  freezeT=0;shakeT=0;
   ghostRec=[];recT=0;gi=0;
   ghostPlay=(save.ghost&&save.ghost.length>2)?save.ghost:null;
   slowT=0;tsc=1;
@@ -181,7 +221,8 @@ function die(){
     sfx.revive();return;
   }
   player.alive=false;player.vy=-350;run.overlayT=0;sfx.death();
-  // 精算(米俵=4斗※前立所持で5斗、討取=1斗、100m踏破ごとに1斗)
+  shake(.35,7);
+  // 精算(米俵=4斗※前立所持で5斗、小判=1石、討取=1斗+連討ちボーナス、100m踏破ごとに1斗)
   const m=Math.floor(run.px/10);
   save.killsTotal+=run.kills;
   run.kahoGet=null;
@@ -189,7 +230,7 @@ function die(){
     if(!hasKaho(k.id)&&k.left()<=0){save.kaho.push(k.id);run.kahoGet=k}
   }
   const riceVal=hasKaho('maedate')?.5:.4;
-  run.kokuGain=run.rice*riceVal+run.kills*.1+Math.floor(m/100)*.1;
+  run.kokuGain=run.rice*riceVal+run.koban*1+run.kills*.1+run.comboBonus+Math.floor(m/100)*.1;
   rollWeek();
   save.koku+=run.kokuGain;
   save.kokuWeek+=run.kokuGain;
@@ -205,9 +246,11 @@ function nearMiss(){
 
 //==================== 生成 ====================
 function spawn(){
+  if(run.calmT>0){run.spawnT=.4;return}   // 静けさの間は湧かない
   const m=run.px/10,x=run.px+W+90,r=Math.random();
   let type;
-  if(m<80)type=r<.6?'a':'y';
+  if(run.waveT>0)type=r<.62?'a':'a2';     // 敵襲中は足軽ラッシュ
+  else if(m<80)type=r<.6?'a':'y';
   else if(m<250)type=r<.45?'a':(r<.8?'y':'s');
   else type=r<.38?'a':(r<.62?'y':(r<.84?'s':'a2'));
   const kind=()=>Math.random()<.7?'yari':'katana';
@@ -216,7 +259,8 @@ function spawn(){
     obstacles.push({t:'a',x:x+95,w:30,h:62,mc:99,passed:false,kind:kind()});}
   else if(type==='y')obstacles.push({t:'y',x,w:70,h:56,mc:99,passed:false});
   else obstacles.push({t:'s',x,w:24,h:112,mc:99,passed:false});
-  const gap=300+Math.random()*220+run.speed*.38;
+  let gap=300+Math.random()*220+run.speed*.38;
+  if(run.waveT>0)gap*=.5;                 // 敵襲中は密度2倍
   run.spawnT=gap/run.speed;
 }
 function spawnRice(){
@@ -228,12 +272,21 @@ function spawnRice(){
   }else{           // 二段跳び専用の高い列
     for(let i=0;i<3;i++)rices.push({x:x+i*52,y:GROUND-195});
   }
+  // レアドロップ: 小判(+1石)
+  if(Math.random()<.07){
+    rices.push({x:x+230+Math.random()*90,y:GROUND-70-Math.random()*130,gold:true});
+  }
 }
 
 //==================== 更新 ====================
 function update(dt){
+  if(freezeT>0){freezeT-=dt;return}          // ヒットストップ
+  if(shakeT>0)shakeT-=dt;
   if(slowT>0){slowT-=dt;tsc=slowT>0?.3:1}else tsc=1;
   const d=dt*tsc;
+  // パーティクル
+  for(const p of parts){p.t+=dt;p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=900*dt}
+  parts=parts.filter(p=>p.t<p.life);
   if(state!=='run')return;
   if(player.alive){
     run.t+=d;
@@ -243,10 +296,34 @@ function update(dt){
   run.nearFlash=Math.max(0,run.nearFlash-dt);
   run.reviveFlash=Math.max(0,run.reviveFlash-dt);
 
+  // コンボ猶予
+  if(run.comboT>0){run.comboT-=d;if(run.comboT<=0)run.combo=0}
+  // 敵襲ウェーブ
+  if(player.alive){
+    const m0=run.px/10;
+    if(run.waveT<=0&&run.calmT<=0&&m0>=run.waveNext){
+      run.waveT=4.5;sfx.wave();shake(.3,4);
+      floats.push({x:W/2,y:360,txt:'敵 襲 ー ッ ！',t:0,life:1.6,size:34,color:SHU,vy:-8});
+    }
+    if(run.waveT>0){run.waveT-=d;
+      if(run.waveT<=0){run.calmT=2.6;run.waveNext=m0+360+Math.random()*220;
+        // 静けさのご褒美: 俵の大アーチ
+        const x=run.px+W+120;
+        for(let i=0;i<7;i++){const t=i/6;rices.push({x:x+i*46,y:GROUND-60-Math.sin(t*Math.PI)*110})}
+      }}
+    if(run.calmT>0)run.calmT-=d;
+  }
   // プレイヤー
   if(player.alive){
+    const wasAir=player.y<GROUND-2;
     player.vy+=2300*d;player.y+=player.vy*d;
-    if(player.y>=GROUND){player.y=GROUND;player.vy=0;player.jumps=0}
+    if(player.y>=GROUND){
+      if(wasAir&&player.vy>350){ // 着地の土煙
+        for(let i=0;i<5;i++)parts.push({x:PX-6+Math.random()*12,y:GROUND-2,
+          vx:-60-Math.random()*80,vy:-30-Math.random()*50,life:.3+Math.random()*.2,t:0,color:'#8d8478',r:3+Math.random()*3});
+      }
+      player.y=GROUND;player.vy=0;player.jumps=0;
+    }
     player.leg+=run.speed*d*.045;
     if(player.inv>0)player.inv-=d;
     // ゴースト記録
@@ -287,7 +364,17 @@ function update(dt){
       if(pb.bot>top&&pb.top<GROUND){ // 矩形重なり
         if(ob.t==='a'&&player.vy>150&&pb.bot<top+26){ // 踏みつけ
           ob.dead=true;ob.dy=0;ob.da=1;player.vy=-540;player.jumps=1;run.kills++;
-          floats.push({x:sx,y:top-30,txt:'討取！',t:0,life:.8,size:22,color:SHU,vy:-46});
+          freezeT=.045;shake(.1,2.5);                 // ヒットストップ
+          burst(sx+15,top+20,10,INK,240,3.5);          // 墨飛沫
+          burst(sx+15,top+20,4,SHU,180,3);
+          if(run.comboT>0)run.combo++;else run.combo=1;
+          run.comboT=2;
+          if(run.combo>=2){
+            run.comboBonus+=(run.combo-1)*.1;
+            floats.push({x:sx,y:top-58,txt:run.combo+'連討ち！',t:0,life:1,size:28,color:SHU,vy:-40});
+          }else{
+            floats.push({x:sx,y:top-30,txt:'討取！',t:0,life:.8,size:22,color:SHU,vy:-46});
+          }
           sfx.stomp();
         }else die();
       }else if(pb.bot<=top){ // 跳び越え中: クリアランス記録
@@ -318,8 +405,15 @@ function update(dt){
       if(rc.taken)continue;
       const sx=rc.x-run.px;
       if(sx>PX-30&&sx<PX+30&&rc.y>player.y-100&&rc.y<player.y+14){
-        rc.taken=true;run.rice++;sfx.coin();
-        floats.push({x:sx,y:rc.y-16,txt:'俵',t:0,life:.5,size:15,color:'#8a6a25',vy:-70});
+        rc.taken=true;
+        if(rc.gold){
+          run.koban++;sfx.koban();shake(.15,3);
+          burst(sx,rc.y,14,GOLD,260,4);
+          floats.push({x:sx,y:rc.y-24,txt:'小判！ +1石',t:0,life:1.2,size:24,color:'#8a6a25',vy:-50});
+        }else{
+          run.rice++;sfx.coin();
+          floats.push({x:sx,y:rc.y-16,txt:'俵',t:0,life:.5,size:15,color:'#8a6a25',vy:-70});
+        }
       }
     }
   }
@@ -463,6 +557,19 @@ function drawTawara(x,y){
   ctx.beginPath();ctx.ellipse(14.5,0,3.2,7.5,0,0,7);ctx.fill();ctx.stroke();
   ctx.restore();
 }
+//---- 小判(レアドロップ) ----
+function drawKoban(x,y){
+  ctx.save();ctx.translate(x,y);
+  const g=Math.sin(performance.now()/180)*.5+.5;   // きらめき
+  ctx.rotate(Math.sin(performance.now()/300)*.15);
+  ctx.fillStyle='#d9b44a';ctx.strokeStyle='#8a6a25';ctx.lineWidth=2;
+  ctx.beginPath();ctx.ellipse(0,0,15,10,0,0,7);ctx.fill();ctx.stroke();
+  ctx.strokeStyle='rgba(138,106,37,.7)';ctx.lineWidth=1.4;
+  ctx.beginPath();ctx.moveTo(-7,-6);ctx.lineTo(-7,6);ctx.moveTo(7,-6);ctx.lineTo(7,6);ctx.stroke();
+  ctx.globalAlpha=.5+g*.5;ctx.fillStyle='#fff2c8';
+  ctx.beginPath();ctx.ellipse(-4,-3.5,3.5,2,-.5,0,7);ctx.fill();
+  ctx.restore();
+}
 //---- 鉄砲足軽(発砲予告の間だけ画面端に現れる) ----
 function drawGunner(){
   const gx=W-26,gy=GROUND;
@@ -554,8 +661,11 @@ function stamp(s,x,y,size,rot){
 
 //==================== 描画 ====================
 function draw(){
+  // 画面揺れ
+  const shaken=shakeT>0;
+  if(shaken){ctx.save();ctx.translate((Math.random()-.5)*shakeAmp*2,(Math.random()-.5)*shakeAmp*2)}
   // 和紙
-  ctx.fillStyle=WASHI;ctx.fillRect(0,0,W,H);
+  ctx.fillStyle=WASHI;ctx.fillRect(-10,-10,W+20,H+20);
   // 月(三日月・左上)
   drawCrescent(86,120,26,GOLD,.45);
   // 山なみ・城
@@ -617,11 +727,13 @@ function draw(){
     ctx.beginPath();ctx.arc(W-52,GROUND-26,11,0,7);ctx.fill();ctx.restore();
   }
 
-  // 米俵(ふわり浮かせる)
+  // 米俵・小判(ふわり浮かせる)
   for(const rc of rices){
     const sx=rc.x-run.px;
     if(sx<-40||sx>W+60)continue;
-    drawTawara(sx,rc.y+Math.sin(run.t*4+rc.x*.02)*3);
+    const by=rc.y+Math.sin(run.t*4+rc.x*.02)*3;
+    if(rc.gold)drawKoban(sx,by);
+    else drawTawara(sx,by);
   }
 
   // ゴースト
@@ -660,6 +772,24 @@ function draw(){
   }
   ctx.restore();
 
+  // スピードライン(高速時)
+  if(state==='run'&&player.alive&&run.speed>470){
+    const la=Math.min(.16,(run.speed-470)/900);
+    ctx.save();ctx.strokeStyle=INK;ctx.lineWidth=2;
+    for(const s of slines){
+      s.x-=run.speed*2.4*(1/60);
+      if(s.x<-s.len){s.x=W+30;s.y=50+Math.random()*640;s.len=70+Math.random()*110}
+      ctx.globalAlpha=la;
+      ctx.beginPath();ctx.moveTo(s.x,s.y);ctx.lineTo(s.x+s.len,s.y);ctx.stroke();
+    }
+    ctx.restore();
+  }
+  // パーティクル
+  for(const p of parts){
+    const a=1-p.t/p.life;
+    ctx.save();ctx.globalAlpha=a*.9;ctx.fillStyle=p.color;
+    ctx.beginPath();ctx.arc(p.x,p.y,p.r*a+1,0,7);ctx.fill();ctx.restore();
+  }
   // 浮き文字
   for(const f of floats){
     const a=f.t<f.life-.35?1:Math.max(0,(f.life-f.t)/.35);
@@ -679,6 +809,7 @@ function draw(){
   if(state==='run')drawHUD();
   if(state==='title')drawTitle();
   if(state==='run'&&!player.alive&&run.overlayT>.8)drawResult();
+  if(shaken)ctx.restore();
 }
 function drawHUD(){
   const m=Math.floor(run.px/10);
@@ -737,7 +868,8 @@ function drawResult(){
   }else if(!hasKaho(k0.id)){
     txt(k0.rank+'『'+k0.name+'』まで 討取あと'+k0.left(),W/2,py0+384,14,INK,'center','600',.6);
   }
-  txt('米 '+run.rice+'俵 → 獲得 '+fmtKoku(run.kokuGain),W/2,py0+412,19,'#8a6a25','center','700');
+  const kobanTxt=run.koban>0?'・小判'+run.koban+'枚':'';
+  txt('米 '+run.rice+'俵'+kobanTxt+' → 獲得 '+fmtKoku(run.kokuGain),W/2,py0+412,19,'#8a6a25','center','700');
   txt('今週 '+fmtKoku(save.kokuWeek)+' ／ 総石高 '+fmtKoku(save.koku),W/2,py0+442,17,INK,'center','700');
   txt('身分：'+mibunName(save.koku)+'　最長 '+save.bestDist+'m',W/2,py0+468,15,INK,'center','600',.85);
   if(Math.floor(performance.now()/600)%2===0)
@@ -747,7 +879,7 @@ function drawResult(){
 
 //==================== 入力 ====================
 function press(){
-  audioUnlock();
+  audioUnlock();startBgm();
   if(state==='title'){startRun();return}
   if(state==='run'){
     if(player.alive){
@@ -779,6 +911,7 @@ requestAnimationFrame(loop);
 // デバッグ用フック(テスト版のみ)
 window.G={run,player,save,startRun,die,press,draw,update,
   get state(){return state},get obstacles(){return obstacles},
+  get rices(){return rices},get parts(){return parts},
   get spritesReady(){return spritesReady}};
 </script>
 </body>
