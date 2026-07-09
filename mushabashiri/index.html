@@ -49,6 +49,7 @@ rollWeek();
 if(save.killsTotal===undefined)save.killsTotal=0;
 if(save.kobanWallet===undefined)save.kobanWallet=0;
 if(save.kobanEver===undefined)save.kobanEver=save.kobanWallet;
+if(save.soundOn===undefined)save.soundOn=true;
 if(!Array.isArray(save.kaho))save.kaho=[];
 const CONTINUE_COST=5; // 小判コンティニュー(フリーラン限定。番付戦実装時は番付では無効にする)
 function persist(){try{localStorage.setItem(SK,JSON.stringify(save))}catch(e){}}
@@ -90,7 +91,7 @@ function audioUnlock(){
   if(AC&&AC.state==='suspended')AC.resume();
 }
 function tone(f0,f1,dur,type,vol){
-  if(!AC)return;
+  if(!AC||!save.soundOn)return;
   const t=AC.currentTime,o=AC.createOscillator(),g=AC.createGain();
   o.type=type;o.frequency.setValueAtTime(f0,t);
   o.frequency.exponentialRampToValueAtTime(Math.max(30,f1),t+dur);
@@ -122,7 +123,7 @@ function startBgm(){
   if(bgmOn||!AC)return;bgmOn=true;
   const step=60/132/2;let next=AC.currentTime+.1;
   setInterval(()=>{
-    if(!AC||document.hidden)return;
+    if(!AC||document.hidden||!save.soundOn)return;
     while(next<AC.currentTime+.3){
       const s=bgmStep%16;
       if(s===0)bgmNote(next,82,.16,'sine',.16);          // 太鼓(強)
@@ -136,7 +137,18 @@ function startBgm(){
 }
 
 //==================== 状態 ====================
-let state='title';           // title | run(死亡演出含む)
+let state='title';           // title | home | run(死亡演出含む)
+let overlay=null;            // home上のパネル: null | 'kura' | 'banzuke' | 'settings'
+// UIボタン矩形(論理座標540x960)
+const BTN={
+  shutsujin:{x:90,y:556,w:360,h:104},
+  kura:{x:44,y:700,w:140,h:96},
+  banzuke:{x:200,y:700,w:140,h:96},
+  settings:{x:356,y:700,w:140,h:96},
+  homeBack:{x:18,y:22,w:120,h:56},   // リザルト/ラン中の本陣戻り
+  soundTgl:{x:150,y:470,w:240,h:70}  // 設定パネル内
+};
+function inRect(x,y,r){return x>=r.x&&x<=r.x+r.w&&y>=r.y&&y<=r.y+r.h}
 let tsc=1,slowT=0;           // スロー演出
 let freezeT=0;               // ヒットストップ
 let shakeT=0,shakeAmp=0;     // 画面揺れ
@@ -167,7 +179,7 @@ const SPRITES={};let spritesReady=false;
   const player=['runA','runB','jump','dead'];
   const defs={runA:'img/shika_runA.png',runB:'img/shika_runB.png',jump:'img/shika_jump.png',dead:'img/shika_dead.png',
     eYari:'img/enemy_yari.png',eKatana:'img/enemy_katana.png',eTeppo:'img/enemy_teppo.png',
-    tawara:'img/item_tawara.png',koban:'img/item_koban.png',titleBg:'img/title_bg.jpg'};
+    tawara:'img/item_tawara.png',koban:'img/item_koban.png',titleBg:'img/title_bg.jpg',homeBg:'img/home_bg.jpg'};
   let n=0;
   for(const[k,src]of Object.entries(defs)){
     const im=new Image();
@@ -773,6 +785,8 @@ function stamp(s,x,y,size,rot){
 
 //==================== 描画 ====================
 function draw(){
+  if(state==='title'){drawTitle();return}
+  if(state==='home'){drawHome();return}
   // 画面揺れ
   const shaken=shakeT>0;
   if(shaken){ctx.save();ctx.translate((Math.random()-.5)*shakeAmp*2,(Math.random()-.5)*shakeAmp*2)}
@@ -960,7 +974,6 @@ function draw(){
   }
 
   if(state==='run')drawHUD();
-  if(state==='title')drawTitle();
   if(state==='run'&&!player.alive&&run.downT>0)drawContinue();
   if(state==='run'&&run.finalized&&run.overlayT>.8)drawResult();
   if(shaken)ctx.restore();
@@ -992,39 +1005,113 @@ function drawHUD(){
   drawCrescent(W-46,62,17,player.revive?GOLD:'#8d867a',player.revive?.95:.35);
   txt('七難八苦',W-46,92,13,player.revive?INK:'#888','center','600',player.revive?.8:.5);
 }
+function coverImg(im){
+  const s=Math.max(W/im.naturalWidth,H/im.naturalHeight);
+  const dw=im.naturalWidth*s,dh=im.naturalHeight*s;
+  ctx.drawImage(im,(W-dw)/2,(H-dh)/2,dw,dh);
+}
+function haloTitle(y,size){
+  ctx.save();ctx.shadowColor='rgba(255,250,238,.95)';ctx.shadowBlur=14;
+  txt('むしゃばしり！',W/2,y,size,INK,'center','800');
+  ctx.shadowBlur=8;txt('むしゃばしり！',W/2,y,size,INK,'center','800');
+  ctx.restore();
+}
+// ボタン(和紙の角丸+文字)
+function button(r,label,size,primary){
+  ctx.save();
+  ctx.fillStyle=primary?'rgba(166,60,43,.94)':'rgba(240,233,215,.92)';
+  const rr=14;
+  ctx.beginPath();
+  ctx.moveTo(r.x+rr,r.y);ctx.arcTo(r.x+r.w,r.y,r.x+r.w,r.y+r.h,rr);
+  ctx.arcTo(r.x+r.w,r.y+r.h,r.x,r.y+r.h,rr);ctx.arcTo(r.x,r.y+r.h,r.x,r.y,rr);
+  ctx.arcTo(r.x,r.y,r.x+r.w,r.y,rr);ctx.closePath();ctx.fill();
+  ctx.strokeStyle=primary?'rgba(255,240,210,.9)':'rgba(36,31,25,.55)';
+  ctx.lineWidth=primary?2.5:1.6;ctx.stroke();
+  ctx.restore();
+  txt(label,r.x+r.w/2,r.y+r.h/2,size,primary?'#fff2d8':INK,'center','800');
+}
 function drawTitle(){
-  // 背景キーアート(可愛いポップ)。無ければ和紙単色にフォールバック
   const bg=SPRITES.titleBg;
-  if(imgOk(bg)){
-    const s=Math.max(W/bg.naturalWidth,H/bg.naturalHeight);
-    const dw=bg.naturalWidth*s,dh=bg.naturalHeight*s;
-    ctx.drawImage(bg,(W-dw)/2,(H-dh)/2,dw,dh);
-  }else{
-    ctx.fillStyle=WASHI;ctx.fillRect(0,0,W,H);
+  if(imgOk(bg))coverImg(bg);else{ctx.fillStyle=WASHI;ctx.fillRect(0,0,W,H)}
+  txt('シネマ絵巻 presents',W/2,92,16,INK,'center','700',.8);
+  haloTitle(158,58);
+  stamp('試',W/2+198,112,22,.14);
+  ctx.save();ctx.shadowColor='rgba(255,250,238,.9)';ctx.shadowBlur=8;
+  txt('第一戦　月山富田城の戦い',W/2,214,19,INK,'center','700');
+  ctx.restore();
+  if(Math.floor(performance.now()/500)%2===0){
+    ctx.save();ctx.shadowColor='rgba(0,0,0,.35)';ctx.shadowBlur=6;
+    txt('― タップして始める ―',W/2,H-70,24,'#fff2d8','center','800');ctx.restore();
   }
-  // 題字(上部の明るい空へ。白ハローで可読性)
-  txt('シネマ絵巻 presents',W/2,86,16,INK,'center','700',.8);
+  txt('テスト版',W/2,H-28,13,INK,'center','600',.55);
+}
+function drawHome(){
+  const bg=SPRITES.homeBg;
+  if(imgOk(bg))coverImg(bg);else{ctx.fillStyle='#c9d18a';ctx.fillRect(0,0,W,H)}
+  // 上部: 題字(小)+ステータス帯
+  haloTitle(70,34);
   ctx.save();
-  ctx.shadowColor='rgba(255,250,238,.95)';ctx.shadowBlur=14;
-  txt('むしゃばしり！',W/2,150,58,INK,'center','800');
-  ctx.shadowBlur=8;txt('むしゃばしり！',W/2,150,58,INK,'center','800');
+  ctx.fillStyle='rgba(36,31,25,.42)';
+  ctx.fillRect(30,104,W-60,44);
   ctx.restore();
-  stamp('試',W/2+198,104,22,.14);
-  // 下部の情報パネル(半透明和紙で可読性確保)
-  const py=560,ph=H-py-56;
-  ctx.save();
-  ctx.fillStyle='rgba(240,233,215,.82)';
-  ctx.fillRect(28,py,W-56,ph);
-  ctx.strokeStyle='rgba(36,31,25,.5)';ctx.lineWidth=1.5;ctx.strokeRect(32,py+4,W-64,ph-8);
+  txt('身分 '+mibunName(save.koku),W/2,118,17,'#fff2d8','center','800');
+  txt('総石高 '+fmtKoku(save.koku)+'　小判 '+save.kobanWallet+'　最長 '+save.bestDist+'m',
+    W/2,138,14,'#fff2d8','center','700');
+  // 本陣に佇むちび(床几のあたり)
+  if(spritesReady)drawShikaSprite(W/2,532,0,1,{stand:true});
+  else drawShika(W/2,532,0,1,INK,{stand:true});
+  // 主ボタン+小ボタン
+  button(BTN.shutsujin,'⚔  出　陣',30,true);
+  button(BTN.kura,'蔵',22,false);
+  button(BTN.banzuke,'番付',22,false);
+  button(BTN.settings,'設定',22,false);
+  // 蔵ボタンに家宝数バッジ
+  txt(save.kaho.length+'/'+KAHO.length,BTN.kura.x+BTN.kura.w/2,BTN.kura.y+BTN.kura.h-16,12,SHU,'center','700');
+  if(overlay==='kura')drawKura();
+  else if(overlay==='banzuke')drawBanzuke();
+  else if(overlay==='settings')drawSettings();
+}
+function panelBox(title){
+  ctx.save();ctx.fillStyle='rgba(24,20,15,.5)';ctx.fillRect(0,0,W,H);ctx.restore();
+  const px=44,py=170,pw=W-88,ph=560;
+  ctx.fillStyle='rgba(240,233,215,.98)';ctx.fillRect(px,py,pw,ph);
+  ctx.strokeStyle=INK;ctx.lineWidth=2;ctx.strokeRect(px+8,py+8,pw-16,ph-16);
+  txt(title,W/2,py+44,26,INK,'center','800');
+  txt('×',px+pw-30,py+34,26,INK,'center','800');
+  txt('― どこかをタップで閉じる ―',W/2,py+ph-26,14,INK,'center','600',.55);
+  return {px,py,pw,ph};
+}
+function drawKura(){
+  const b=panelBox('蔵　—　家宝');
+  let y=b.py+92;
+  for(const k of KAHO){
+    const owned=hasKaho(k.id);
+    ctx.save();ctx.globalAlpha=owned?1:.5;
+    drawCrescent(b.px+52,y+4,13,owned?GOLD:'#9a927f',owned?.95:.5);
+    txt((owned?'':'未 ')+k.rank+'『'+k.name+'』',b.px+80,y-6,18,owned?INK:'#6a6257','left','800');
+    txt(owned?('効果: '+k.effect):('条件: '+k.progress()),b.px+80,y+18,14,owned?'#7a5e20':'#8a8272','left','600');
+    if(owned)txt(k.lore,b.px+80,y+40,12,INK,'left','500',.7);
+    ctx.restore();
+    y+=104;
+  }
+}
+function drawBanzuke(){
+  const b=panelBox('番付');
+  txt('自己最長',W/2,b.py+120,18,INK,'center','700',.8);
+  txt(save.bestDist+' m',W/2,b.py+164,44,SHU,'center','800');
+  txt('今週の石高　'+fmtKoku(save.kokuWeek),W/2,b.py+230,20,'#7a5e20','center','800');
+  txt('総石高　'+fmtKoku(save.koku)+'　身分 '+mibunName(save.koku),W/2,b.py+266,17,INK,'center','700');
+  ctx.save();ctx.globalAlpha=.7;
+  txt('全国・地方の番付は近日実装',W/2,b.py+360,17,INK,'center','700');
+  txt('（地方1位に「関東管領」などの称号）',W/2,b.py+388,14,INK,'center','600');
   ctx.restore();
-  txt('第一戦　月山富田城の戦い　—　山中鹿之介',W/2,py+30,19,INK,'center','700');
-  txt('能力「七難八苦」一度だけ討死から蘇る',W/2,py+58,15,SHU,'center','700',.95);
-  txt('タップで跳躍（二段可）・敵は踏んで討取・穴と矢に用心',W/2,py+86,14,INK,'center','600',.8);
-  txt('最長 '+save.bestDist+'m ／ 総石高 '+fmtKoku(save.koku)+' ／ '+mibunName(save.koku),W/2,py+118,16,'#7a5e20','center','800');
-  txt('家宝 '+save.kaho.length+'/'+KAHO.length+'　小判 '+save.kobanWallet+'枚',W/2,py+144,15,INK,'center','700',.9);
-  if(Math.floor(performance.now()/500)%2===0)
-    txt('― 画面をタップして出陣 ―',W/2,py+180,23,SHU,'center','800');
-  txt('テスト版：記録はこの端末にのみ保存されます',W/2,H-24,12,INK,'center','600',.6);
+}
+function drawSettings(){
+  const b=panelBox('設定');
+  button(BTN.soundTgl,save.soundOn?'♪  音　オン':'♪  音　オフ',22,save.soundOn);
+  txt('タップで切り替え',W/2,BTN.soundTgl.y+BTN.soundTgl.h+26,14,INK,'center','600',.7);
+  txt('むしゃばしり！ テスト版',W/2,b.py+b.ph-90,15,INK,'center','700',.8);
+  txt('記録はこの端末にのみ保存されます',W/2,b.py+b.ph-64,13,INK,'center','600',.6);
 }
 function drawResult(){
   const a=Math.min(1,(run.overlayT-.8)/.4);
@@ -1058,13 +1145,33 @@ function drawResult(){
   if(Math.floor(performance.now()/600)%2===0)
     txt('― タップで再び出陣 ―',W/2,py0+ph-28,21,SHU,'center','700');
   ctx.restore();
+  // 本陣へ戻るボタン(左上・タップ判定はBTN.homeBack)
+  button(BTN.homeBack,'← 本陣',18,false);
 }
 
 //==================== 入力 ====================
-function press(){
+function tapAt(lx,ly){
   audioUnlock();startBgm();
-  if(state==='title'){startRun();return}
+  if(state==='title'){state='home';return}
+  if(state==='home'){
+    if(overlay){                       // パネル表示中
+      if(overlay==='settings'&&inRect(lx,ly,BTN.soundTgl)){
+        save.soundOn=!save.soundOn;persist();if(save.soundOn)startBgm();return;
+      }
+      overlay=null;return;             // それ以外のタップで閉じる
+    }
+    if(inRect(lx,ly,BTN.shutsujin)){startRun();return}
+    if(inRect(lx,ly,BTN.kura)){overlay='kura';return}
+    if(inRect(lx,ly,BTN.banzuke)){overlay='banzuke';return}
+    if(inRect(lx,ly,BTN.settings)){overlay='settings';return}
+    return;
+  }
   if(state==='run'){
+    // リザルト表示中: 本陣ボタンなら戻る、それ以外は再出陣
+    if(run.finalized&&run.overlayT>.8){
+      if(inRect(lx,ly,BTN.homeBack)){state='home';return}
+      startRun();return;
+    }
     if(player.alive){
       if(player.jumps<2){
         player.vy=player.jumps===0?-830:-700;
@@ -1079,12 +1186,22 @@ function press(){
       obstacles=obstacles.filter(o=>(o.x-run.px)>430);bullets=[];arrows=[];
       floats.push({x:W/2,y:400,txt:'小判の力で立ち上がった！',t:0,life:1.5,size:26,color:'#8a6a25',vy:-22});
       sfx.revive();
-    }else if(run.finalized&&run.overlayT>.8){startRun()}
+    }
   }
 }
-cvs.addEventListener('pointerdown',e=>{e.preventDefault();press()});
+function press(){ // 旧API(キー入力用): ラン中はジャンプ、それ以外は中央タップ相当
+  tapAt(W/2,H/2);
+}
+cvs.addEventListener('pointerdown',e=>{
+  e.preventDefault();
+  const rc=cvs.getBoundingClientRect();
+  const lx=(e.clientX-rc.left)/rc.width*W;
+  const ly=(e.clientY-rc.top)/rc.height*H;
+  tapAt(lx,ly);
+});
 addEventListener('keydown',e=>{
-  if(e.code==='Space'||e.code==='ArrowUp'){e.preventDefault();press()}
+  if(e.code==='Space'||e.code==='ArrowUp'){e.preventDefault();
+    if(state==='run'&&player.alive)tapAt(0,0);else tapAt(W/2,H/2);}
 });
 document.addEventListener('touchmove',e=>e.preventDefault(),{passive:false});
 
@@ -1101,9 +1218,10 @@ function loop(t){
 requestAnimationFrame(loop);
 
 // デバッグ用フック(テスト版のみ)
-window.G={run,player,save,startRun,die,press,draw,update,
+window.G={run,player,save,startRun,die,press,draw,update,tapAt,BTN,
   get state(){return state},get obstacles(){return obstacles},
   get rices(){return rices},get parts(){return parts},
+  get overlay(){return overlay},
   get spritesReady(){return spritesReady}};
 </script>
 </body>
