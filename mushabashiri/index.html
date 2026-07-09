@@ -197,7 +197,7 @@ function drawShikaSprite(x,feetY,ph,alpha,o){
   else if(o.stand)im=SPRITES.runA;
   else im=(Math.floor(ph/Math.PI)%2===0)?SPRITES.runA:SPRITES.runB;
   if(!im||!im.naturalWidth)return;
-  const h=o.dead?SPRITE_H*.82:SPRITE_H;
+  const h=o.h||(o.dead?SPRITE_H*.82:SPRITE_H);
   const w=im.naturalWidth*h/im.naturalHeight;
   ctx.save();ctx.globalAlpha=alpha;
   if(o.mono)ctx.filter='grayscale(1)';
@@ -1057,9 +1057,9 @@ function drawHome(){
   txt('身分 '+mibunName(save.koku),W/2,118,17,'#fff2d8','center','800');
   txt('総石高 '+fmtKoku(save.koku)+'　小判 '+save.kobanWallet+'　最長 '+save.bestDist+'m',
     W/2,138,14,'#fff2d8','center','700');
-  // 本陣に佇むちび(床几のあたり)
-  if(spritesReady)drawShikaSprite(W/2,532,0,1,{stand:true});
-  else drawShika(W/2,532,0,1,INK,{stand:true});
+  // 本陣に佇むちび(大きめに)
+  if(spritesReady)drawShikaSprite(W/2,548,0,1,{stand:true,h:232});
+  else drawShika(W/2,548,0,1.7,INK,{stand:true});
   // 主ボタン+小ボタン
   button(BTN.shutsujin,'⚔  出　陣',30,true);
   button(BTN.kura,'蔵',22,false);
