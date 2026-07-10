@@ -177,7 +177,8 @@ function update(dt){
   let mvx=0,mvy=0;
   if(joy&&joy.active){const m=Math.hypot(joy.dx,joy.dy);if(m>6){mvx=joy.dx/m;mvy=joy.dy/m}}
   P.x+=mvx*P.spd*dt;P.y+=mvy*P.spd*dt;
-  if(mvx!==0||mvy!==0){P.leg+=dt*10;if(mvx!==0)P.face=mvx>0?1:-1}
+  P.moving=(mvx!==0||mvy!==0);
+  if(P.moving){P.leg+=dt*11;if(mvx!==0)P.face=mvx>0?1:-1}
   if(P.inv>0)P.inv-=dt;
   cam.x=P.x-W/2;cam.y=P.y-H/2;
   // 武器
@@ -197,7 +198,7 @@ function update(dt){
     if(e.dead){e.dieT+=dt;continue}
     const T=ETYPE[e.kind];
     const dx=P.x-e.x,dy=P.y-e.y,d=Math.hypot(dx,dy)||1;
-    e.face=dx>0?1:-1;
+    e.face=dx>0?1:-1;e.leg=(e.leg||0)+dt*9;
     if(T.ranged){
       // 鉄砲兵: 一定距離を保ちつつ撃つ
       if(d>T.keep+40)  {e.x+=dx/d*e.spd*dt;e.y+=dy/d*e.spd*dt}
@@ -269,10 +270,12 @@ function drawGround(){
     const sx=(gx*73%50+50)%50,sy=(gy*yhash(gx,gy));const px=gx*T+sx-cam.x,py=gy*T+(gy*29%60)-cam.y;ctx.fillRect(px,py,4,7);}
 }
 function yhash(a,b){return ((a*31+b*17)%60+60)%60}
-function drawChar(im,wx,wy,face,scale,alpha,rot){
+function drawChar(im,wx,wy,face,scale,alpha,rot,bob,tilt){
   const h=(scale||1)*118,w=ok(im)?im.naturalWidth*h/im.naturalHeight:60;
   const sx=wx-cam.x,sy=wy-cam.y;
-  ctx.save();ctx.translate(sx,sy);if(rot)ctx.rotate(rot);ctx.globalAlpha=alpha??1;ctx.scale(face,1);
+  ctx.save();ctx.translate(sx,sy-(bob||0));
+  if(rot)ctx.rotate(rot);else if(tilt)ctx.rotate(tilt);
+  ctx.globalAlpha=alpha??1;ctx.scale(face,1);
   if(ok(im))ctx.drawImage(im,-w/2,-h,w,h);ctx.restore();
 }
 function draw(){
@@ -294,7 +297,8 @@ function draw(){
     if(e.dead){drawChar(im,e.x,e.y,e.face,sc,Math.max(0,1-e.dieT*2.5),e.dieT*3);continue}
     // 騎馬兵の突進・溜め表示
     if(e.wind>0){const sx=e.x-cam.x,sy=e.y-cam.y;ctx.save();ctx.globalAlpha=e.wind*1.2;ctx.strokeStyle=SHU;ctx.lineWidth=3;ctx.beginPath();ctx.arc(sx,sy-24,30,0,6.283);ctx.stroke();ctx.restore();}
-    drawChar(im,e.x,e.y,e.face,sc,1);
+    const ebob=Math.abs(Math.sin(e.leg||0))*(e.kind==='kiba'?3:5);
+    drawChar(im,e.x,e.y,e.face,sc,1,0,ebob,Math.sin(e.leg||0)*.04);
     if(e.hp<e.maxhp){const sx=e.x-cam.x,sy=e.y-cam.y,bw=32*sc;ctx.fillStyle='rgba(0,0,0,.4)';ctx.fillRect(sx-bw/2,sy-92*sc,bw,4);ctx.fillStyle=HPC;ctx.fillRect(sx-bw/2,sy-92*sc,bw*Math.max(0,e.hp/e.maxhp),4)}
   }
   // 敵の弾
@@ -324,11 +328,13 @@ function draw(){
     if(s.kind==='shuriken'){ctx.translate(sx,sy);ctx.rotate(R.t*20);ctx.fillStyle=INK;ctx.fillRect(-9,-2,18,4);ctx.fillRect(-2,-9,4,18);}
     else{ctx.fillStyle=INK;ctx.beginPath();ctx.arc(sx,sy,6,0,6.283);ctx.fill();ctx.strokeStyle=GOLD;ctx.globalAlpha=.5;ctx.beginPath();ctx.moveTo(sx-s.vx*.03,sy-s.vy*.03);ctx.lineTo(sx,sy);ctx.lineWidth=4;ctx.stroke();}
     ctx.restore();}
-  // プレイヤー(選択武将のスプライト)
+  // プレイヤー(選択武将のスプライト+走りバウンド)
   if(state==='run'||state==='levelup'||state==='dead'){
     const blink=P.inv>0&&Math.floor(R.t*16)%2===0;
     const im=selChar.id==='shika'?((Math.floor(P.leg/Math.PI)%2===0)?SP.runA:SP.runB):charSprite(selChar.id);
-    if(!blink)drawChar(im,P.x,P.y,P.face,1.1,state==='dead'?Math.max(0,1-R.overlayT):1,state==='dead'?R.overlayT*2:0);
+    const mv=P.moving&&state==='run';
+    const bob=mv?Math.abs(Math.sin(P.leg))*10:0, tilt=mv?Math.sin(P.leg)*.07:0;
+    if(!blink)drawChar(im,P.x,P.y,P.face,1.1,state==='dead'?Math.max(0,1-R.overlayT):1,state==='dead'?R.overlayT*2:0,bob,tilt);
   }
   // 軌道手裏剣
   const orbW=P.weapons.find(w=>WEAPONS[w.id].orbit);
